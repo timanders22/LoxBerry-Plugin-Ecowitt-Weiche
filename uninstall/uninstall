@@ -1,0 +1,35 @@
+#!/bin/bash
+# Ecowitt-Weiche - Deinstallation
+# command <ZUFALLSKENNUNG> <NAME> <FOLDER> <VERSION> <BASEFOLDER>
+#
+# LoxBerry raeumt config/, log/ und data/ des Plugins selbst weg - aber nur
+# die VERZEICHNISSE. Eine Sicherungsdatei DANEBEN bliebe liegen, und in ihr
+# steht das Wortzeichen, mit dem der Endpunkt erreichbar war. Die Hausregel
+# ist eindeutig: wer neben dem Ordner ablegt, um ein Upgrade zu ueberleben,
+# raeumt beim Deinstallieren selbst auf. Beim WifiScanner blieb so eine
+# Anwesenheitsliste des Haushalts liegen.
+ARGV3=$3
+ARGV5=$5
+PFOLDER="${ARGV3:-ecowittweiche}"
+BASE="${ARGV5:-$LBHOMEDIR}"
+if [ -z "$BASE" ] || [ ! -d "$BASE" ]; then
+    SELF=$(cd "$(dirname "$0")" && pwd)
+    PFOLDER=$(basename "$(cd "$SELF/.." && pwd)")
+    BASE=$(cd "$SELF/../../.." 2>/dev/null && pwd)
+fi
+
+ENTFERNT=0
+if [ -n "$BASE" ] && [ -f "$BASE/config/plugins/$PFOLDER.backup.json" ]; then
+    rm -f "$BASE/config/plugins/$PFOLDER.backup.json" 2>/dev/null && ENTFERNT=1
+fi
+[ -n "$BASE" ] && rm -rf "$BASE/data/plugins/$PFOLDER" 2>/dev/null
+
+if [ "$ENTFERNT" = "1" ]; then
+    echo "<OK> Ecowitt-Weiche entfernt, Sicherung mit dem Wortzeichen geloescht."
+else
+    echo "<OK> Ecowitt-Weiche entfernt. Es lag keine Sicherung neben dem Plugin-Ordner."
+fi
+echo "<INFO> Der virtuelle HTTP-Eingang in der Loxone-Projektdatei bleibt bestehen."
+echo "<INFO> Dort muss die Adresse wieder auf die Station selbst zeigen, sonst"
+echo "<INFO> laeuft der Behaelter ins Leere."
+exit 0

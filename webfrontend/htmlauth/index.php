@@ -75,54 +75,7 @@ if ($ew_lb !== '' && is_file($ew_lb . '/libs/phplib/loxberry_system.php')) {
 }
 
 /* ---------- Sprache ------------------------------------------------------ */
-function ew_sprachdatei()
-{
-    $t = getenv('LBPTEMPLATEDIR');
-    if ($t === false || $t === '') {
-        /* Zwei Lagen, zwei Pfade - wie beim Unterbau oben. Installiert liegen
-           die Vorlagen in einem ganz anderen Zweig als im Archiv. */
-        $lb = getenv('LBHOMEDIR');
-        $kand = array();
-        if ($lb !== false && $lb !== '') {
-            $kand[] = rtrim($lb, '/\\') . '/templates/plugins/' . basename(__DIR__);
-        }
-        $kand[] = dirname(dirname(dirname(__DIR__))) . '/templates/plugins/' . basename(__DIR__);
-        $kand[] = dirname(dirname(__DIR__)) . '/templates';
-        $t = $kand[count($kand) - 1];
-        foreach ($kand as $k) {
-            if (is_dir($k . '/lang')) {
-                $t = $k;
-                break;
-            }
-        }
-    }
-    $lang = 'de';
-    $g = (getenv('LBHOMEDIR') ?: '/opt/loxberry') . '/config/system/general.json';
-    if (is_file($g)) {
-        $d = json_decode((string) @file_get_contents($g), true);
-        if (isset($d['Base']['Lang']) && $d['Base']['Lang'] === 'en') {
-            $lang = 'en';
-        }
-    }
-    $f = $t . '/lang/language_' . $lang . '.ini';
-    return is_file($f) ? $f : $t . '/lang/language_de.ini';
-}
 
-function ew_t($schluessel)
-{
-    static $tab = null;
-    if ($tab === null) {
-        $tab = @parse_ini_file(ew_sprachdatei(), true);
-        if (!is_array($tab)) {
-            $tab = array();
-        }
-    }
-    $teil = explode('.', $schluessel, 2);
-    if (count($teil) === 2 && isset($tab[$teil[0]][$teil[1]])) {
-        return $tab[$teil[0]][$teil[1]];
-    }
-    return $schluessel;
-}
 
 function ew_e($s)
 {
@@ -231,6 +184,54 @@ $ew_rahmen = class_exists('LBWeb', false);
 if ($ew_rahmen) {
     LBWeb::lbheader(ew_t('ALLGEMEIN.TITEL'), 'https://wiki.loxberry.de/', 'help.html');
 }
+
+/* ---------------- Einstellungen sichern ----------------
+ *
+ * Ausgegeben wird die VOLLE Konfiguration - samt Aktionstoken. Ohne ihn
+ * stuenden nach dem Zurueckspielen alle Felder richtig, und das Plugin
+ * kaeme trotzdem nicht an die Anlage; die Datei waere wertlos. Damit
+ * traegt sie ein Geheimnis, und der Hinweis am Knopf sagt das. */
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ew_sichern'])) {
+    $ew_js = json_encode(ew_config(),
+        JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    if ($ew_js !== false) {
+        header('Content-Type: application/json; charset=utf-8');
+        header('Content-Disposition: attachment; filename="ecowitt_einstellungen_'
+               . date('Ymd_His') . '.json"');
+        echo $ew_js;
+        exit;
+    }
+    $ew_fehler[] = ew_t('TEXT.SICH_SCHREIBFEHLER');
+}
+
+/* ---------------- Einstellungen zurueckspielen ----------------
+ *
+ * is_uploaded_file() ZUERST: ohne diese Pruefung liesse sich jede Datei des
+ * Servers unterschieben. Dann die Groessengrenze - eine Sicherung dieses
+ * Plugins ist wenige Kilobyte gross; alles darueber wird gar nicht gelesen. */
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ew_zurueck'])) {
+    if (!isset($_FILES['ew_sicherung']) || !is_array($_FILES['ew_sicherung'])
+        || !isset($_FILES['ew_sicherung']['tmp_name'])
+        || !@is_uploaded_file($_FILES['ew_sicherung']['tmp_name'])) {
+        $ew_fehler[] = ew_t('TEXT.SICH_KEINE_DATEI');
+    } elseif ((int) $_FILES['ew_sicherung']['size'] > 262144) {
+        $ew_fehler[] = ew_t('TEXT.SICH_ZU_GROSS');
+    } else {
+        list($ew_neu, $ew_mangel, $ew_n) = ew_sicherung_lesen(
+            (string) @file_get_contents($_FILES['ew_sicherung']['tmp_name']));
+        if ($ew_neu === null) {
+            /* ALLE Beanstandungen, nicht nur die erste - und geaendert wird
+             * nichts. */
+            $ew_fehler[] = ew_t('TEXT.SICH_ABGELEHNT') . ' '
+                            . implode(' ', $ew_mangel);
+        } elseif (ew_config_speichern($ew_neu)) {
+            $ew_meldungen[] = sprintf(ew_t('TEXT.SICH_UEBERNOMMEN'), $ew_n);
+        } else {
+            $ew_fehler[] = ew_t('TEXT.SICH_SCHREIBFEHLER');
+        }
+    }
+}
+
 ?>
 <style>
 /* Hausstandard - wortgetreu aus VORLAGE_hausstandard.css.html */
@@ -377,9 +378,28 @@ if ($ew_rahmen) {
   <button data-role="none" class="sm-btn sm-b-aktion" type="submit" name="token_weg" value="1"><?php echo ew_t('TEXT.TOKEN_WEG'); ?></button>
 <?php } ?>
 </div>
-<div class="sm-legende"><span><i class="sm-punkt sm-b-aktion"></i> <?php echo ew_t('LEGENDE.AKTION'); ?></span></div>
+<div class="sm-legende"><span><i class="sm-punkt sm-b-aktion"></i> <?php echo ew_t('LEGENDE.AKTION'); ?></span> <span><i class="sm-punkt sm-b-lesen"></i> <?php echo ew_t('LEGENDE.LESEN'); ?></span></div>
 <p class="sm-hilfe"><?php echo ew_t('TEXT.TOKEN_KNOEPFE'); ?></p>
 </form>
+
+<h2><?= ew_t('TEXT.H_SICHERUNG') ?></h2>
+<div class="sm-hinweis"><?= ew_t('TEXT.SICH_ERKLAERUNG') ?></div>
+<div class="sm-warnung"><?= ew_t('TEXT.SICH_WARNUNG') ?></div>
+<div class="sm-knopfreihe">
+  <!-- ZWEI GETRENNTE Formulare. Das Sichern schickt einen Download und ruft
+       exit auf; das Zurueckspielen braucht enctype="multipart/form-data".
+       Wer beides in ein Formular legt, bekommt entweder keinen Upload oder
+       einen Download, der das Speichern verschluckt. -->
+  <form action="index.php" method="post">
+    <input data-role="none" type="hidden" name="activetab" value="tab-settings">
+    <button data-role="none" class="sm-btn sm-b-lesen" type="submit" name="ew_sichern" value="1"><?= ew_t('TEXT.K_SICHERN') ?></button>
+  </form>
+  <form action="index.php" method="post" enctype="multipart/form-data">
+    <input data-role="none" type="hidden" name="activetab" value="tab-settings">
+    <input data-role="none" type="file" name="ew_sicherung" accept=".json">
+    <button data-role="none" class="sm-btn sm-b-aktion" type="submit" name="ew_zurueck" value="1"><?= ew_t('TEXT.K_ZURUECK') ?></button>
+  </form>
+</div>
 </div>
 
 <!-- ================= Einbindung in Loxone ================= -->

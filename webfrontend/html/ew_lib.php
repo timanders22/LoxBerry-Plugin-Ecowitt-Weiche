@@ -379,3 +379,92 @@ function ew_stand_lesen()
     $d = json_decode((string) @file_get_contents($f), true);
     return is_array($d) ? $d : array();
 }
+
+
+/**
+ * Eine Sicherungsdatei einlesen - und dabei NICHTS durchgehen lassen.
+ *
+ * Die sieben Punkte aus REGELN_2, und der wichtigste ist der dritte: eine
+ * halb gueltige Datei ueberschreibt GAR NICHTS. Wer eine Sicherung
+ * zurueckspielt, will entweder den ganzen Stand oder gar keinen - eine zur
+ * Haelfte uebernommene Konfiguration ist schlimmer als die alte, und man
+ * sieht es ihr nicht an.
+ *
+ * Unbekannte Schluessel sind eine Beanstandung, kein stiller Verlust: sie
+ * stammen aus einer anderen Fassung oder einem anderen Plugin.
+ *
+ * Rueckgabe: array(Konfiguration|null, Beanstandungen[], uebernommene Werte).
+ */
+function ew_sicherung_lesen($roh)
+{
+    $mangel = array();
+    $daten = json_decode((string) $roh, true);
+    if (!is_array($daten)) {
+        return array(null, array(ew_t('TEXT.SICH_KEIN_JSON')), 0);
+    }
+    $neu = ew_vorgaben();
+    $bekannt = array_keys($neu);
+    $anzahl = 0;
+    foreach ($daten as $k => $w) {
+        if (!in_array($k, $bekannt, true)) {
+            $mangel[] = sprintf(ew_t('TEXT.SICH_FREMD'),
+                                 htmlspecialchars((string) $k, ENT_QUOTES, 'UTF-8'));
+            continue;
+        }
+        $neu[$k] = $w;
+        $anzahl++;
+    }
+    if ($anzahl === 0) {
+        $mangel[] = ew_t('TEXT.SICH_LEER');
+    }
+    return array($mangel ? null : $neu, $mangel, $anzahl);
+}
+
+function ew_sprachdatei()
+{
+    $t = getenv('LBPTEMPLATEDIR');
+    if ($t === false || $t === '') {
+        /* Zwei Lagen, zwei Pfade - wie beim Unterbau oben. Installiert liegen
+           die Vorlagen in einem ganz anderen Zweig als im Archiv. */
+        $lb = getenv('LBHOMEDIR');
+        $kand = array();
+        if ($lb !== false && $lb !== '') {
+            $kand[] = rtrim($lb, '/\\') . '/templates/plugins/' . basename(__DIR__);
+        }
+        $kand[] = dirname(dirname(dirname(__DIR__))) . '/templates/plugins/' . basename(__DIR__);
+        $kand[] = dirname(dirname(__DIR__)) . '/templates';
+        $t = $kand[count($kand) - 1];
+        foreach ($kand as $k) {
+            if (is_dir($k . '/lang')) {
+                $t = $k;
+                break;
+            }
+        }
+    }
+    $lang = 'de';
+    $g = (getenv('LBHOMEDIR') ?: '/opt/loxberry') . '/config/system/general.json';
+    if (is_file($g)) {
+        $d = json_decode((string) @file_get_contents($g), true);
+        if (isset($d['Base']['Lang']) && $d['Base']['Lang'] === 'en') {
+            $lang = 'en';
+        }
+    }
+    $f = $t . '/lang/language_' . $lang . '.ini';
+    return is_file($f) ? $f : $t . '/lang/language_de.ini';
+}
+
+function ew_t($schluessel)
+{
+    static $tab = null;
+    if ($tab === null) {
+        $tab = @parse_ini_file(ew_sprachdatei(), true);
+        if (!is_array($tab)) {
+            $tab = array();
+        }
+    }
+    $teil = explode('.', $schluessel, 2);
+    if (count($teil) === 2 && isset($tab[$teil[0]][$teil[1]])) {
+        return $tab[$teil[0]][$teil[1]];
+    }
+    return $schluessel;
+}

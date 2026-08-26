@@ -33,6 +33,23 @@ $ew_kandidaten[] = dirname(dirname(dirname(__DIR__))) . '/html/plugins/'
                  . basename(__DIR__) . '/ew_lib.php';
 $ew_kandidaten[] = dirname(__DIR__) . '/html/ew_lib.php';
 
+/* ==================================================================
+ * DIE HANDLER STEHEN VOR lbheader() - DAS IST BAUVORSCHRIFT
+ * ==================================================================
+ *
+ * Stand der Kopf davor, war er beim Aufruf von header() schon
+ * geschrieben - "Cannot modify header information", und der Knopf
+ * "Einstellungen sichern" lieferte eine Seite mit angehaengtem JSON
+ * statt einer Datei.
+ *
+ * Am PHP-CLI ist das unsichtbar: header() ist dort wirkungslos und
+ * headers_sent() immer falsch. Und wer OHNE gueltiges Formularmerkmal
+ * misst, wird vom Wachposten abgewiesen, bevor der Handler anlaeuft.
+ * Beides hat den Fehler lange verdeckt.
+ *
+ * Reihenfolge: Bibliothek, Konfiguration, Wachposten, Reiterwahl,
+ * ALLE Handler samt Downloads, dann erst lbheader(), dann HTML.
+ * ================================================================== */
 $ew_geladen = '';
 foreach ($ew_kandidaten as $ew_k) {
     if (is_file($ew_k)) {
@@ -181,9 +198,6 @@ $ew_plugin = ew_pfade()['plugin'];
 $ew_tokenteil = $ew_cfg['token'] !== '' ? '?token=' . rawurlencode($ew_cfg['token']) : '';
 
 $ew_rahmen = class_exists('LBWeb', false);
-if ($ew_rahmen) {
-    LBWeb::lbheader(ew_t('ALLGEMEIN.TITEL'), 'https://wiki.loxberry.de/', 'help.html');
-}
 
 /* ---------------- Einstellungen sichern ----------------
  *
@@ -230,6 +244,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ew_zurueck'])) {
             $ew_fehler[] = ew_t('TEXT.SICH_SCHREIBFEHLER');
         }
     }
+}
+
+
+if ($ew_rahmen) {
+    LBWeb::lbheader(ew_t('ALLGEMEIN.TITEL'), 'https://wiki.loxberry.de/', 'help.html');
 }
 
 ?>

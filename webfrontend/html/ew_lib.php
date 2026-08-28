@@ -59,7 +59,7 @@ function ew_pfade()
         'lbhome' => $lb,
         'config' => ($cfg !== false && $cfg !== '') ? $cfg : $lb . '/config/plugins/' . $ordner,
         'log'    => ($log !== false && $log !== '') ? $log : $lb . '/log/plugins/' . $ordner,
-        'data'   => ($dat !== false && $dat !== '') ? $dat : $lb . '/data/plugins/' . $ordner,
+        'datadir'   => ($dat !== false && $dat !== '') ? $dat : $lb . '/data/plugins/' . $ordner,
     );
     $p['cfgdatei'] = $p['config'] . '/ecowitt.json';
     $p['sicherung'] = $lb . '/config/plugins/' . $ordner . '.backup.json';
@@ -329,10 +329,10 @@ function ew_weiche()
 function ew_stand_schreiben(array $w)
 {
     $p = ew_pfade();
-    if (!is_dir($p['data'])) {
-        @mkdir($p['data'], 0775, true);
+    if (!is_dir($p['datadir'])) {
+        @mkdir($p['datadir'], 0775, true);
     }
-    $f = $p['data'] . '/stand.json';
+    $f = $p['datadir'] . '/stand.json';
     $alt = array();
     if (is_file($f)) {
         $d = json_decode((string) @file_get_contents($f), true);
@@ -372,7 +372,7 @@ function ew_stand_schreiben(array $w)
 function ew_stand_lesen()
 {
     $p = ew_pfade();
-    $f = $p['data'] . '/stand.json';
+    $f = $p['datadir'] . '/stand.json';
     if (!is_file($f)) {
         return array();
     }
@@ -500,7 +500,7 @@ function ew_merkwort()
         return $wort;
     }
     $pfade = ew_pfade();
-    $verz  = isset($pfade['data']) ? $pfade['data'] : '';
+    $verz  = isset($pfade['datadir']) ? $pfade['datadir'] : '';
     if ($verz === '') {
         return '';
     }

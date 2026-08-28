@@ -58,7 +58,7 @@ foreach ($ew_kandidaten as $ew_k) {
         break;
     }
 }
-if ($ew_geladen === '' || !function_exists('ew_pfade')) {
+if ($ew_geladen === '' || !function_exists('ew_paths')) {
     /* Lieber eine lesbare Seite als ein leeres 500. Wer das hier liest, hat
        ein Plugin, dessen Oberflaeche steht und dessen Unterbau fehlt - und
        genau das soll dastehen, nicht "Diese Seite funktioniert nicht". */
@@ -94,11 +94,6 @@ if ($ew_lb !== '' && is_file($ew_lb . '/libs/phplib/loxberry_system.php')) {
 /* ---------- Sprache ------------------------------------------------------ */
 
 
-function ew_e($s)
-{
-    return htmlspecialchars((string) $s, ENT_QUOTES, 'UTF-8');
-}
-
 /* ---------- Reiter: Positivliste, ids und Leiste gehoeren zusammen -------- */
 $ew_reiter = array('tab-settings', 'tab-loxone', 'tab-test');
 $ew_tab = 'tab-settings';
@@ -111,7 +106,7 @@ if (isset($_POST['activetab']) && in_array((string) $_POST['activetab'], $ew_rei
 /* ---------- Eingaben verarbeiten ----------------------------------------- */
 $ew_cfg = ew_config();
 $ew_meldung = '';
-$ew_fehler = '';
+$ew_fehler = array();
 
 /* ---------------------------------------------------------------- *
  * Der Wachposten - EIN Posten, vor allen Handlern.
@@ -127,7 +122,7 @@ if ($ew_wache !== '') {
     if ($ew_reiter_merk !== null) {
         $_POST['activetab'] = $ew_reiter_merk;
     }
-    $ew_fehler = $ew_wache;
+    $ew_fehler[] = $ew_wache;
 }
 
 $ew_probe = null;
@@ -141,7 +136,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['speichern'])) {
        nicht stillschweigend geleert - sonst steht das Plugin ohne Quelle da
        und niemand weiss warum. */
     if (($roh_p !== '' && $p === '') || ($roh_e !== '' && $e === '')) {
-        $ew_fehler = ew_t('TEXT.ADRESSE_UNGUELTIG');
+        $ew_fehler[] = ew_t('TEXT.ADRESSE_UNGUELTIG');
     } else {
         $ew_cfg['primaer'] = $p;
         $ew_cfg['ersatz'] = $e;
@@ -212,7 +207,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['pruefen'])) {
 
 $ew_stand = ew_stand_lesen();
 $ew_host = isset($_SERVER['HTTP_HOST']) && $_SERVER['HTTP_HOST'] !== '' ? $_SERVER['HTTP_HOST'] : 'loxberry';
-$ew_plugin = ew_pfade()['plugin'];
+$ew_plugin = ew_paths()['plugin'];
 $ew_tokenteil = $ew_cfg['token'] !== '' ? '?token=' . rawurlencode($ew_cfg['token']) : '';
 
 $ew_rahmen = class_exists('LBWeb', false);
@@ -346,7 +341,7 @@ if ($ew_rahmen) {
 <div class="sm-wrap">
 
 <?php if ($ew_meldung !== '') { ?><div class="sm-hinweis"><?= ew_e($ew_meldung) ?></div><?php } ?>
-<?php if ($ew_fehler !== '') { ?><div class="sm-fehler"><?= ew_e($ew_fehler) ?></div><?php } ?>
+<?php foreach ($ew_fehler as $ew_fehler_m) { ?><div class="sm-fehler"><?= ew_e($ew_fehler_m) ?></div><?php } ?>
 
 <!-- Die Reiterleiste steht AUSGESCHRIEBEN da, nicht in einer Schleife
      erzeugt. Umgeschaltet wird ueber den Server, damit jeder Reiter
@@ -535,7 +530,7 @@ $ew_endp = getenv('LBPHTMLDIR');
 if ($ew_endp === false || $ew_endp === '') {
     /* Drei Stufen bis webfrontend: <ordner> -> plugins -> htmlauth. Zwei
        Stufen blieben bei htmlauth stehen und suchten darunter ein html/. */
-    $ew_endp = dirname(dirname(dirname(__DIR__))) . '/html/plugins/' . ew_pfade()['plugin'];
+    $ew_endp = dirname(dirname(dirname(__DIR__))) . '/html/plugins/' . ew_paths()['plugin'];
 }
 $ew_da = is_file($ew_endp . '/live.php') && is_file($ew_endp . '/ew_lib.php');
 $ew_selbst[] = array(
@@ -544,7 +539,7 @@ $ew_selbst[] = array(
     'wie' => $ew_da ? $ew_endp : ew_t('TEXT.S_NICHT_GEFUNDEN'),
 );
 
-$ew_cfgdatei = ew_pfade()['cfgdatei'];
+$ew_cfgdatei = ew_paths()['cfgdatei'];
 $ew_schreib = is_writable(is_file($ew_cfgdatei) ? $ew_cfgdatei : dirname($ew_cfgdatei));
 $ew_selbst[] = array(
     'was' => ew_t('TEXT.S_SCHREIBBAR'),
@@ -574,7 +569,7 @@ $ew_selbst[] = array(
 
 <h3><?php echo ew_t('TEXT.PROTOKOLL'); ?></h3>
 <?php
-$ew_logdatei = ew_pfade()['log'] . '/ecowitt.log';
+$ew_logdatei = ew_paths()['log'] . '/ecowitt.log';
 $ew_zeilen = is_file($ew_logdatei) ? array_slice(array_reverse(file($ew_logdatei, FILE_IGNORE_NEW_LINES) ?: array()), 0, 60) : array();
 ?>
 <?php if ($ew_zeilen) { ?>

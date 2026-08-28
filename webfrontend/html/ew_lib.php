@@ -28,7 +28,7 @@
  */
 
 /** Pfade des Plugins. LBP*-Umgebungsvariablen setzt LoxBerry. */
-function ew_pfade()
+function ew_paths()
 {
     static $p = null;
     if ($p !== null) {
@@ -81,7 +81,7 @@ function ew_vorgaben()
 
 function ew_config()
 {
-    $p = ew_pfade();
+    $p = ew_paths();
     $c = ew_vorgaben();
     $je_gesetzt = false;
     if (is_file($p['cfgdatei'])) {
@@ -115,7 +115,7 @@ function ew_config()
 
 function ew_config_speichern(array $c)
 {
-    $p = ew_pfade();
+    $p = ew_paths();
     if (!is_dir($p['config'])) {
         @mkdir($p['config'], 0775, true);
     }
@@ -156,7 +156,7 @@ function ew_adresse_sauber($a)
 
 function ew_log($text)
 {
-    $p = ew_pfade();
+    $p = ew_paths();
     if (!is_dir($p['log'])) {
         @mkdir($p['log'], 0775, true);
     }
@@ -328,7 +328,7 @@ function ew_weiche()
 /** Merkt sich, welche Seite zuletzt getragen hat - fuer Oberflaeche und Protokoll. */
 function ew_stand_schreiben(array $w)
 {
-    $p = ew_pfade();
+    $p = ew_paths();
     if (!is_dir($p['datadir'])) {
         @mkdir($p['datadir'], 0775, true);
     }
@@ -371,7 +371,7 @@ function ew_stand_schreiben(array $w)
 
 function ew_stand_lesen()
 {
-    $p = ew_pfade();
+    $p = ew_paths();
     $f = $p['datadir'] . '/stand.json';
     if (!is_file($f)) {
         return array();
@@ -499,7 +499,7 @@ function ew_merkwort()
     if ($wort !== null) {
         return $wort;
     }
-    $pfade = ew_pfade();
+    $pfade = ew_paths();
     $verz  = isset($pfade['datadir']) ? $pfade['datadir'] : '';
     if ($verz === '') {
         return '';
@@ -566,4 +566,12 @@ function ew_wachposten()
         return ew_t('WACHE.FALSCH');
     }
     return '';
+}
+
+/* Der Escape-Helfer gehoert in die Bibliothek, nicht in
+ * index.php: sonst steht er dem Endpunkt und jedem weiteren
+ * Aufrufer nicht zur Verfuegung (Hausform, REGELN_2). */
+function ew_e($s)
+{
+    return htmlspecialchars((string) $s, ENT_QUOTES, 'UTF-8');
 }

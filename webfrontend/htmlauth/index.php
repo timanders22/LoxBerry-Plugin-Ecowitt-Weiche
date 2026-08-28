@@ -112,6 +112,24 @@ if (isset($_POST['activetab']) && in_array((string) $_POST['activetab'], $ew_rei
 $ew_cfg = ew_config();
 $ew_meldung = '';
 $ew_fehler = '';
+
+/* ---------------------------------------------------------------- *
+ * Der Wachposten - EIN Posten, vor allen Handlern.
+ * Abgewiesen heisst gemeldet, und es wird NICHTS ausgefuehrt: $_POST
+ * wird geleert, nur der aktive Reiter bleibt stehen, damit der Bediener
+ * nach der Abweisung dort steht, wo er war.
+ * ---------------------------------------------------------------- */
+$ew_wache = ew_wachposten();
+if ($ew_wache !== '') {
+    $ew_reiter_merk = isset($_POST['activetab']) && is_string($_POST['activetab'])
+        ? (string) $_POST['activetab'] : null;
+    $_POST = array();
+    if ($ew_reiter_merk !== null) {
+        $_POST['activetab'] = $ew_reiter_merk;
+    }
+    $ew_fehler = $ew_wache;
+}
+
 $ew_probe = null;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['speichern'])) {
@@ -352,6 +370,7 @@ if ($ew_rahmen) {
 <div class="sm-step"><?php echo ew_t('TEXT.WARUM'); ?></div>
 
 <form action="index.php" method="post">
+  <?php echo ew_fmt(); ?>
 <input data-role="none" type="hidden" name="activetab" value="tab-settings">
 
 <div class="sm-feld">
@@ -410,10 +429,12 @@ if ($ew_rahmen) {
        Wer beides in ein Formular legt, bekommt entweder keinen Upload oder
        einen Download, der das Speichern verschluckt. -->
   <form action="index.php" method="post">
+    <?php echo ew_fmt(); ?>
     <input data-role="none" type="hidden" name="activetab" value="tab-settings">
     <button data-role="none" class="sm-btn sm-b-lesen" type="submit" name="ew_sichern" value="1"><?= ew_t('TEXT.K_SICHERN') ?></button>
   </form>
   <form action="index.php" method="post" enctype="multipart/form-data">
+    <?php echo ew_fmt(); ?>
     <input data-role="none" type="hidden" name="activetab" value="tab-settings">
     <input data-role="none" type="file" name="ew_sicherung" accept=".json">
     <button data-role="none" class="sm-btn sm-b-aktion" type="submit" name="ew_zurueck" value="1"><?= ew_t('TEXT.K_ZURUECK') ?></button>
@@ -456,6 +477,7 @@ if ($ew_rahmen) {
 <?php } ?>
 
 <form action="index.php" method="post">
+  <?php echo ew_fmt(); ?>
 <input data-role="none" type="hidden" name="activetab" value="tab-test">
 <div class="sm-knopfreihe">
   <button data-role="none" class="sm-btn sm-b-lesen" type="submit" name="pruefen" value="1"><?php echo ew_t('TEXT.BEIDE_PRUEFEN'); ?></button>

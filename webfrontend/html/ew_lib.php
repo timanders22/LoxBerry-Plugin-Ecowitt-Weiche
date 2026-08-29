@@ -162,6 +162,7 @@ function ew_log($text)
     }
     $f = $p['log'] . '/ecowitt.log';
     /* Kurz halten - eine Minutenabfrage fuellt sonst die SD-Karte. */
+    clearstatcache(true, $f);
     if (is_file($f) && filesize($f) > 262144) {
         $z = file($f, FILE_IGNORE_NEW_LINES) ?: array();
         @file_put_contents($f, implode("\n", array_slice($z, -800)) . "\n");

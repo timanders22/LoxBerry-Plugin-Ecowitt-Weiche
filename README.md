@@ -1,6 +1,6 @@
 # LoxBerry-Plugin „Ecowitt-Weiche"
 
-Version 0.9.4
+Version 0.9.12
 
 Holt die Messwerte einer Ecowitt-Wetterstation über **zwei** Netzwerkschnittstellen
 und reicht die Antwort derjenigen durch, die gerade trägt. In der Loxone-Projektdatei
@@ -139,6 +139,35 @@ Abhilfe: `clearstatcache(true, …)` **vor** dem Tor; der zweite Parameter
 beschränkt das Leeren auf diese eine Datei. Dasselbe Muster tragen Robonect,
 Saugroboter, SignalBot, Octopus, Sprachsteuerung und WärmepumpeCloud schon
 länger — es ist am 29.08.2026 im ganzen Bestand nachgezogen worden.
+
+## Fassung 0.9.11 — die halb gültige Sicherungsdatei
+
+Beim Zurückspielen einer Sicherung war die Vorgabenliste der Ausgangspunkt,
+und nur was in der Datei stand wurde darüber geschrieben. Eine Datei mit
+einem einzigen Schlüssel lief damit **ohne Beanstandung** durch, wurde
+gespeichert, und alle übrigen Einstellungen fielen still auf Werk zurück —
+quittiert mit „1 Wert übernommen".
+
+Gemessen wurde das nicht hier, sondern an VolkswagenID 0.9.11 am 03.09.2026
+unter PHP 7.4 und 8.4: dort fiel dabei auch das Aktionstoken auf `''`, und
+jede im Miniserver eingetragene Adresse war stumm ungültig. Am 07.09.2026
+ist das Muster über den Bestand ausgerollt worden (30 Linien); diese Fassung
+ist der Anteil der Ecowitt-Weiche daran.
+
+Der Hausstandard sagt: **eine halb gültige Datei ändert gar nichts.**
+`webfrontend/html/ew_lib.php:438` vergleicht deshalb gegen die VORGABEN, nicht
+gegen die gelesenen Schlüssel, und nennt die fehlenden beim Namen
+(`TEXT.SICH_FEHLEND`, neu in beiden Sprachdateien). Was außerhalb der
+Konfigurationsdatei liegt, darf weiter fehlen.
+
+## Fassung 0.9.12 — nur die Kopfzeile
+
+Zeile 3 dieser Datei stand seit 0.9.4 auf „Version 0.9.4", während
+`plugin.cfg` längst 0.9.11 trug. Aufgefallen ist das am 08.09.2026 bei einer
+Nachmessung am Gerät — nicht durch ein Werkzeug: `freigabe_pruefen.py` und
+`fassungslage.py` prüfen die drei `.cfg` gegeneinander und gegen das
+Tag-Archiv, die README-Kopfzeile aber nur `fassung_setzen.py`, und das
+läuft erst beim Heben der Nummer. Am Code ändert diese Fassung nichts.
 
 ## Lizenz
 

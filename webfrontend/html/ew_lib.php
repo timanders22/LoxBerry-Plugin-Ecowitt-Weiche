@@ -27,6 +27,42 @@
  * (c) Ecowitt-Weiche Plugin Authors - MIT-Lizenz
  */
 
+/**
+ * Die LoxBerry-Wurzel. Gelesen wird $LBHOMEDIR; fehlt die Umgebung, wird vom
+ * Ablageort dieser Datei aufwaerts der Ordner gesucht, der config/plugins,
+ * data/plugins UND config/system/general.json traegt (Regeln/06,
+ * lb_wurzel_suchen()).
+ *
+ * Bis 0.9.12 stand hier ein fester Rueckfall auf den Geraetepfad. Ohne
+ * LBHOMEDIR las das Plugin dann in jedem anderen Baum keine Konfiguration und
+ * arbeitete still auf den Vorgaben - in WSL gemessen 18.09.2026
+ * (Bestand-2026-09-18/klasse-H, Fall M2; Pruefung-Ecowitt-Weiche-0.9.13,
+ * Faelle W1 bis W5).
+ *
+ * Findet sich keine Wurzel, bleibt sie leer, und die Bibliothek schreibt
+ * nirgends hin.
+ */
+function ew_wurzel()
+{
+    $lb = getenv('LBHOMEDIR');
+    if ($lb !== false && $lb !== '') {
+        return $lb;
+    }
+    $d = __DIR__;
+    for ($i = 0; $i < 8; $i++) {
+        if (is_dir($d . '/config/plugins') && is_dir($d . '/data/plugins')
+            && is_file($d . '/config/system/general.json')) {
+            return $d;
+        }
+        $eltern = dirname($d);
+        if ($eltern === $d) {
+            break;
+        }
+        $d = $eltern;
+    }
+    return '';
+}
+
 /** Pfade des Plugins. LBP*-Umgebungsvariablen setzt LoxBerry. */
 function ew_paths()
 {
@@ -47,22 +83,28 @@ function ew_paths()
         || $ordner === 'html' || $ordner === 'htmlauth' || $ordner === 'plugins') {
         $ordner = 'ecowittweiche';
     }
-    $lb = getenv('LBHOMEDIR');
-    if ($lb === false || $lb === '') {
-        $lb = '/opt/loxberry';
-    }
+    $lb = ew_wurzel();
     $cfg = getenv('LBPCONFIGDIR');
     $log = getenv('LBPLOGDIR');
     $dat = getenv('LBPDATADIR');
     $p = array(
         'plugin' => $ordner,
         'lbhome' => $lb,
-        'config' => ($cfg !== false && $cfg !== '') ? $cfg : $lb . '/config/plugins/' . $ordner,
-        'log'    => ($log !== false && $log !== '') ? $log : $lb . '/log/plugins/' . $ordner,
-        'datadir'   => ($dat !== false && $dat !== '') ? $dat : $lb . '/data/plugins/' . $ordner,
+        'config' => ($cfg !== false && $cfg !== '') ? $cfg
+                    : ($lb !== '' ? $lb . '/config/plugins/' . $ordner : ''),
+        'log'    => ($log !== false && $log !== '') ? $log
+                    : ($lb !== '' ? $lb . '/log/plugins/' . $ordner : ''),
+        'datadir'   => ($dat !== false && $dat !== '') ? $dat
+                    : ($lb !== '' ? $lb . '/data/plugins/' . $ordner : ''),
     );
-    $p['cfgdatei'] = $p['config'] . '/ecowitt.json';
-    $p['sicherung'] = $lb . '/config/plugins/' . $ordner . '.backup.json';
+    $p['cfgdatei'] = $p['config'] !== '' ? $p['config'] . '/ecowitt.json' : '';
+    if ($lb !== '') {
+        $p['sicherung'] = $lb . '/config/plugins/' . $ordner . '.backup.json';
+    } elseif ($p['config'] !== '') {
+        $p['sicherung'] = dirname($p['config']) . '/' . $ordner . '.backup.json';
+    } else {
+        $p['sicherung'] = '';
+    }
     return $p;
 }
 
@@ -79,24 +121,140 @@ function ew_vorgaben()
     );
 }
 
+/** Eine JSON-Datei als Feld lesen; null, wenn sie fehlt oder kein Objekt ist. */
+function ew_json_lesen($f)
+{
+    if ($f === '' || !is_file($f)) {
+        return null;
+    }
+    $d = json_decode((string) @file_get_contents($f), true);
+    return is_array($d) ? $d : null;
+}
+
+/**
+ * Traegt ein Stand Inhalt? Ja, wenn er ein Objekt ist, in dem das
+ * Wortzeichen schon einmal geschrieben wurde - auch leer, denn wer es in der
+ * Oberflaeche bewusst entfernt, will es ohne (siehe ew_config()).
+ */
+function ew_hat_inhalt($d)
+{
+    return is_array($d) && array_key_exists('token', $d) && is_string($d['token']);
+}
+
+/**
+ * Unteilbar schreiben: Nebendatei mit 0600, vollstaendig schreiben, dann
+ * umbenennen. Rueckgabe true nur, wenn die Datei danach dasteht.
+ *
+ * Bis 0.9.12 ging die Zweitschrift per PHP-Kopierfunktion direkt ueber die
+ * alte; die kappt das Ziel, bevor sie es fuellt (Bestand-2026-09-18/klasse-D, Einzelprobe
+ * unter ulimit -f 0: "sicherung.json nachher: 0 Byte"), und eine neu
+ * angelegte Zweitschrift bekam 0644 - mit dem Wortzeichen darin
+ * (Pruefung-Ecowitt-Weiche-0.9.13, Fall Z8: "Rechte Zweitschrift: 644").
+ * Vorbild: Raumklima 0.11.10 rk_json_schreiben().
+ */
+function ew_json_schreiben($pfad, array $daten)
+{
+    if ($pfad === '') {
+        return false;
+    }
+    $ordner = dirname($pfad);
+    if (!is_dir($ordner) && !@mkdir($ordner, 0775, true) && !is_dir($ordner)) {
+        return false;
+    }
+    $js = json_encode($daten, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+    if ($js === false) {
+        return false;
+    }
+    $tmp = $pfad . '.tmp.' . getmypid();
+    /* Die Rechte gehoeren an das Anlegen, nicht an ein chmod danach. */
+    $umask_alt = umask(0077);
+    $fh = @fopen($tmp, 'c');
+    umask($umask_alt);
+    if ($fh === false) {
+        return false;
+    }
+    @chmod($tmp, 0600);
+    /* Bei voller Karte schreibt fwrite() nur einen Teil und meldet dessen
+       Laenge; deshalb wird die Laenge verglichen, nicht auf false geprueft. */
+    $ok = ftruncate($fh, 0) && @fwrite($fh, $js) === strlen($js);
+    if (!@fflush($fh)) {
+        $ok = false;
+    }
+    if (!@fclose($fh)) {
+        $ok = false;
+    }
+    if (!$ok || !@rename($tmp, $pfad)) {
+        @unlink($tmp);
+        return false;
+    }
+    return true;
+}
+
+/**
+ * Selbstheilung nach Inhalt, aufgerufen, wenn die Konfiguration keinen
+ * Inhalt traegt (fehlt, "{}" oder unlesbar).
+ *
+ * Bis 0.9.12 erzeugte ew_config() in dieser Lage ein neues Wortzeichen und
+ * speicherte es - ueber die Konfiguration UND ueber die Zweitschrift. Damit
+ * waren Adressen und Wortzeichen an beiden Stellen fort. Der Miniserver ruft
+ * live.php alle 16 s ab; ein Abruf zwischen purge_installation und
+ * postinstall.sh genuegte (Pruefung-Ecowitt-Weiche-0.9.13, Faelle Z1-Z6, H9,
+ * H10, vorher rot).
+ *
+ * Jetzt: traegt die Zweitschrift Inhalt, wird aus ihr geheilt; ein
+ * verdraengter Stand, der mehr ist als "{}", bleibt als ecowitt.json.kaputt
+ * (0600) liegen. Die Zweitschrift selbst wird dabei nicht angefasst.
+ * Rueckgabe: der Stand, mit dem ew_config() weiterarbeitet (null = neu).
+ */
+function ew_config_heilen(array $p, $d)
+{
+    if ($p['cfgdatei'] === '') {
+        return $d;
+    }
+    $da = is_file($p['cfgdatei']);
+    $kaputt = $da && $d === null;
+    $z = ew_json_lesen($p['sicherung']);
+    if (!ew_hat_inhalt($z) && !$kaputt) {
+        return $d;
+    }
+    if ($kaputt || (is_array($d) && count($d) > 0)) {
+        $k = $p['cfgdatei'] . '.kaputt';
+        if (@rename($p['cfgdatei'], $k)) {
+            @chmod($k, 0600);
+        }
+    }
+    if (!ew_hat_inhalt($z)) {
+        ew_log('Konfiguration unlesbar und keine Zweitschrift mit Inhalt - der Stand liegt als '
+             . basename($p['cfgdatei']) . '.kaputt, begonnen wird mit den Vorgaben.');
+        return null;
+    }
+    if (!ew_json_schreiben($p['cfgdatei'], $z)) {
+        ew_log('Konfiguration ohne Inhalt; die Zweitschrift liess sich nicht zurueckschreiben.');
+        return $z;
+    }
+    ew_log('Konfiguration aus der Zweitschrift wiederhergestellt.');
+    return $z;
+}
+
 function ew_config()
 {
     $p = ew_paths();
     $c = ew_vorgaben();
     $je_gesetzt = false;
-    if (is_file($p['cfgdatei'])) {
-        $d = json_decode((string) @file_get_contents($p['cfgdatei']), true);
-        if (is_array($d)) {
-            foreach ($c as $k => $v) {
-                if (array_key_exists($k, $d)) {
-                    $c[$k] = $d[$k];
-                }
+    $d = ew_json_lesen($p['cfgdatei']);
+    if (!ew_hat_inhalt($d)) {
+        $d = ew_config_heilen($p, $d);
+    }
+    if (is_array($d)) {
+        foreach ($c as $k => $v) {
+            if (array_key_exists($k, $d)) {
+                $c[$k] = $d[$k];
             }
-            /* Nicht "Datei da oder nicht": postinstall.sh legt sie mit {} an,
-               damit gaebe es den ersten Aufruf nie. Entscheidend ist, ob der
-               SCHLUESSEL schon einmal geschrieben wurde. */
-            $je_gesetzt = array_key_exists('token', $d);
         }
+        /* Nicht "Datei da oder nicht": postinstall.sh legt sie mit {} an,
+           damit gaebe es den ersten Aufruf nie. Entscheidend ist, ob der
+           SCHLUESSEL schon einmal geschrieben wurde. */
+        $je_gesetzt = array_key_exists('token', $d);
     }
     /* Solange der Schluessel noch nie geschrieben wurde, ein Wortzeichen
        erzeugen - der Endpunkt soll nicht ungeschuetzt im Netz stehen. Steht
@@ -113,22 +271,22 @@ function ew_config()
     return $c;
 }
 
+/**
+ * Konfiguration und Zweitschrift schreiben, beide unteilbar
+ * (ew_json_schreiben()). Rueckgabe true nur, wenn die Konfiguration dasteht;
+ * bis 0.9.12 kam true auch dann, wenn schon die Umbenennung gescheitert war,
+ * und die Oberflaeche meldete "gespeichert" (Fall O1, vorher rot).
+ * Die Zweitschrift wird nur mit einem Stand beschrieben, der Inhalt traegt.
+ */
 function ew_config_speichern(array $c)
 {
     $p = ew_paths();
-    if (!is_dir($p['config'])) {
-        @mkdir($p['config'], 0775, true);
-    }
-    /* Erst in eine Nebendatei schreiben, dann umbenennen. Ein Stromausfall
-       mitten im Schreiben hinterlaesst sonst eine halbe Datei, und das Plugin
-       startet danach ohne Konfiguration. */
-    $tmp = $p['cfgdatei'] . '.tmp';
-    $js = json_encode($c, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
-    if (@file_put_contents($tmp, $js) === false) {
+    if (!ew_json_schreiben($p['cfgdatei'], $c)) {
         return false;
     }
-    @rename($tmp, $p['cfgdatei']);
-    @copy($p['cfgdatei'], $p['sicherung']);
+    if (ew_hat_inhalt($c) && !ew_json_schreiben($p['sicherung'], $c)) {
+        ew_log('Die Zweitschrift ' . $p['sicherung'] . ' liess sich nicht schreiben.');
+    }
     return true;
 }
 
@@ -157,6 +315,9 @@ function ew_adresse_sauber($a)
 function ew_log($text)
 {
     $p = ew_paths();
+    if ($p['log'] === '') {
+        return;
+    }
     if (!is_dir($p['log'])) {
         @mkdir($p['log'], 0775, true);
     }
@@ -330,12 +491,13 @@ function ew_weiche()
 function ew_stand_schreiben(array $w)
 {
     $p = ew_paths();
-    if (!is_dir($p['datadir'])) {
+    /* Ohne Wurzel gibt es keinen Datenordner; dann wird nichts geschrieben. */
+    $f = $p['datadir'] !== '' ? $p['datadir'] . '/stand.json' : '';
+    if ($f !== '' && !is_dir($p['datadir'])) {
         @mkdir($p['datadir'], 0775, true);
     }
-    $f = $p['datadir'] . '/stand.json';
     $alt = array();
-    if (is_file($f)) {
+    if ($f !== '' && is_file($f)) {
         $d = json_decode((string) @file_get_contents($f), true);
         if (is_array($d)) {
             $alt = $d;
@@ -363,6 +525,9 @@ function ew_stand_schreiben(array $w)
              . ' -> ' . ($w['quelle'] === '' ? 'keine Quelle' : $w['quelle'] . ' (' . $w['adresse'] . ')')
              . ($w['grund'] ? '  Grund: ' . implode(' | ', $w['grund']) : ''));
     }
+    if ($f === '') {
+        return $neu;
+    }
     $tmp = $f . '.tmp';
     if (@file_put_contents($tmp, json_encode($neu, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)) !== false) {
         @rename($tmp, $f);
@@ -373,8 +538,8 @@ function ew_stand_schreiben(array $w)
 function ew_stand_lesen()
 {
     $p = ew_paths();
-    $f = $p['datadir'] . '/stand.json';
-    if (!is_file($f)) {
+    $f = $p['datadir'] !== '' ? $p['datadir'] . '/stand.json' : '';
+    if ($f === '' || !is_file($f)) {
         return array();
     }
     $d = json_decode((string) @file_get_contents($f), true);
@@ -454,9 +619,9 @@ function ew_sprachdatei()
     if ($t === false || $t === '') {
         /* Zwei Lagen, zwei Pfade - wie beim Unterbau oben. Installiert liegen
            die Vorlagen in einem ganz anderen Zweig als im Archiv. */
-        $lb = getenv('LBHOMEDIR');
+        $lb = ew_paths()['lbhome'];
         $kand = array();
-        if ($lb !== false && $lb !== '') {
+        if ($lb !== '') {
             $kand[] = rtrim($lb, '/\\') . '/templates/plugins/' . basename(__DIR__);
         }
         $kand[] = dirname(dirname(dirname(__DIR__))) . '/templates/plugins/' . basename(__DIR__);
@@ -470,8 +635,11 @@ function ew_sprachdatei()
         }
     }
     $lang = 'de';
-    $g = (getenv('LBHOMEDIR') ?: '/opt/loxberry') . '/config/system/general.json';
-    if (is_file($g)) {
+    /* Dieselbe Wurzel wie ew_paths(); bis 0.9.12 fiel diese Zeile ohne
+       LBHOMEDIR auf den festen Geraetepfad zurueck (Fall W3, vorher rot). */
+    $lb = ew_paths()['lbhome'];
+    $g = $lb !== '' ? $lb . '/config/system/general.json' : '';
+    if ($g !== '' && is_file($g)) {
         $d = json_decode((string) @file_get_contents($g), true);
         if (isset($d['Base']['Lang']) && $d['Base']['Lang'] === 'en') {
             $lang = 'en';

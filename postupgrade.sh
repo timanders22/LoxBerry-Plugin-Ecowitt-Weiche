@@ -28,6 +28,9 @@ fi
 # waere das Einzige, was hier stoert.
 rm -f "$BASE/data/plugins/$PFOLDER/stand.json.tmp"
 rm -f "$BASE/config/plugins/$PFOLDER/ecowitt.json.tmp"
+# Seit 0.9.13 tragen die Nebendateien die Prozessnummer (ew_json_schreiben()).
+rm -f "$BASE/config/plugins/$PFOLDER/ecowitt.json.tmp."* \
+      "$BASE/config/plugins/$PFOLDER.backup.json.tmp."* 2>/dev/null
 
 echo "<OK> postupgrade abgeschlossen."
 echo "<INFO> Wechselzaehler und Protokoll bleiben erhalten - sie sind die"

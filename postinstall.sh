@@ -37,14 +37,49 @@ chmod 700 "$PCONFIG" 2>/dev/null
 chmod 600 "$PCONFIG/ecowitt.json" 2>/dev/null
 
 # Sicherung zurueckspielen (uebersteht Update UND Neuinstallation). Nur, wenn
-# die Konfiguration wirklich leer ist - eine gefuellte wird nicht ueberschrieben.
-# Geprueft wird auf ein Anfuehrungszeichen und nicht auf den Text {} : der
-# Textvergleich liess jede Variante mit Leerzeichen oder Zeilenumbruch durch.
+# die Konfiguration keinen Inhalt traegt - eine gefuellte wird nicht
+# ueberschrieben.
+#
+# Entschieden wird nach INHALT, wie in ew_hat_inhalt(): ein JSON-Objekt, in
+# dem das Wortzeichen schon einmal geschrieben wurde. Bis 0.9.12 genuegte
+# ein Anfuehrungszeichen in der Datei - eine abgeschnittene Konfiguration galt
+# damit als gefuellt und wurde nicht ersetzt (Fall H5, vorher rot), und die
+# Meldung "wiederhergestellt" kam auch, wenn die Zweitschrift selbst nur "{}"
+# war (Fall H7, vorher rot). Pruefung-Ecowitt-Weiche-0.9.13.
 BK="$BASE/config/plugins/$PFOLDER.backup.json"
 CF="$PCONFIG/ecowitt.json"
+mit_inhalt() {   # 0 = ja, 1 = nein, 2 = nicht pruefbar (kein php)
+    [ -s "$1" ] || return 1
+    php -r '$d = json_decode((string) @file_get_contents($argv[1]), true);
+        exit(is_array($d) && array_key_exists("token", $d) && is_string($d["token"]) ? 0 : 1);' -- "$1" 2>/dev/null
+    RC=$?
+    [ "$RC" = 0 ] || [ "$RC" = 1 ] || return 2
+    return "$RC"
+}
 if [ -f "$BK" ]; then
-    if [ ! -s "$CF" ] || ! grep -q '"' "$CF" 2>/dev/null; then
-        cp -p "$BK" "$CF" && echo "<OK> Konfiguration aus Sicherung wiederhergestellt."
+    mit_inhalt "$CF"; CF_RC=$?
+    if [ "$CF_RC" = 1 ]; then
+        mit_inhalt "$BK"; BK_RC=$?
+        if [ "$BK_RC" = 0 ]; then
+            # Der verdraengte Stand bleibt liegen, wenn er mehr ist als die
+            # leere Vorlage.
+            if [ -s "$CF" ] && [ "$(tr -d ' \t\r\n' < "$CF")" != '{}' ]; then
+                cp -p "$CF" "$CF.kaputt" 2>/dev/null && chmod 600 "$CF.kaputt" 2>/dev/null
+            fi
+            # Direkt kopiert: gelesen wird nur die Zweitschrift, und das Ziel
+            # traegt ohnehin keinen Inhalt - ein Abbruch verliert nichts.
+            if cp -p "$BK" "$CF" 2>/dev/null && chmod 600 "$CF" 2>/dev/null; then
+                echo "<OK> Konfiguration aus der Zweitschrift wiederhergestellt."
+            else
+                echo "<WARNING> Die Zweitschrift liess sich nicht zurueckspielen: $BK"
+            fi
+        else
+            echo "<WARNING> Die Zweitschrift traegt keinen verwertbaren Stand - nichts zurueckgespielt:"
+            echo "<WARNING>   $BK"
+        fi
+    elif [ "$CF_RC" = 2 ]; then
+        echo "<WARNING> Der Inhalt von $CF liess sich nicht pruefen (fehlt php?)."
+        echo "<WARNING> Nichts zurueckgespielt; die Zweitschrift liegt weiter unter $BK"
     fi
 fi
 
@@ -67,7 +102,10 @@ fi
 # Abgefragt wird hier NICHTS: bei einer Neuinstallation steht noch keine
 # Adresse in der Konfiguration, und ein Fehlschlag waere kein Fehler.
 if [ -f "$PHTML/ew_lib.php" ]; then
-    AUS=$(EWLIB="$PHTML/ew_lib.php" php -r 'require getenv("EWLIB"); $p = ew_pfade(); echo $p["cfgdatei"];' 2>&1)
+    # ew_paths(), nicht ew_pfade(): die gibt es nicht. Bis 0.9.12 endete der
+    # Selbsttest deshalb bei jeder Installation mit "<FAIL> Der Unterbau
+    # laesst sich nicht laden" (Fall H8, vorher rot).
+    AUS=$(EWLIB="$PHTML/ew_lib.php" php -r 'require getenv("EWLIB"); $p = ew_paths(); echo $p["cfgdatei"];' 2>&1)
     RC=$?
     if [ $RC -ne 0 ]; then
         echo "<FAIL> Der Unterbau laesst sich nicht laden:"

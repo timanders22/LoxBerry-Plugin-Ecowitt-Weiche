@@ -79,11 +79,11 @@ if ($ew_geladen === '' || !function_exists('ew_paths')) {
    stillschweigend - die Oberflaeche erscheint ohne Menue, als stuende sie
    allein im Netz. Eine Bedingung, die nie zutreffen KANN, sieht im Quelltext
    aus wie Vorsicht; sie ist eine tote Zeile.
-   loxberry_system.php zuerst: loxberry_web.php baut darauf auf. */
-$ew_lb = getenv('LBHOMEDIR');
-if ($ew_lb === false || $ew_lb === '') {
-    $ew_lb = is_dir('/opt/loxberry') ? '/opt/loxberry' : '';
-}
+   loxberry_system.php zuerst: loxberry_web.php baut darauf auf.
+   Die Wurzel kommt aus ew_paths() (LBHOMEDIR, sonst Suche aufwaerts); bis
+   0.9.12 stand hier ein Rueckfall auf den festen Geraetepfad, und ohne LBHOMEDIR
+   blieb in jedem anderen Baum der Rahmen weg (Fall W4, vorher rot). */
+$ew_lb = ew_paths()['lbhome'];
 if ($ew_lb !== '' && is_file($ew_lb . '/libs/phplib/loxberry_system.php')) {
     require_once $ew_lb . '/libs/phplib/loxberry_system.php';
     if (is_file($ew_lb . '/libs/phplib/loxberry_web.php')) {
@@ -153,24 +153,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['speichern'])) {
         if ($tk !== '') {
             $ew_cfg['token'] = $tk;
         }
-        ew_config_speichern($ew_cfg);
-        $ew_meldung = ew_t('TEXT.GESPEICHERT');
+        /* Gemeldet wird, was geschah: bis 0.9.12 stand hier "gespeichert"
+           auch dann, wenn die Datei nicht geschrieben war (Fall O1). */
+        if (ew_config_speichern($ew_cfg)) {
+            $ew_meldung = ew_t('TEXT.GESPEICHERT');
+        } else {
+            $ew_fehler[] = ew_t('TEXT.SICH_SCHREIBFEHLER');
+        }
         $ew_cfg = ew_config();
     }
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['token_neu'])) {
     $ew_cfg['token'] = ew_token_erzeugen();
-    ew_config_speichern($ew_cfg);
+    if (ew_config_speichern($ew_cfg)) {
+        $ew_meldung = ew_t('TEXT.TOKEN_ERZEUGT');
+    } else {
+        $ew_fehler[] = ew_t('TEXT.SICH_SCHREIBFEHLER');
+    }
     $ew_cfg = ew_config();
-    $ew_meldung = ew_t('TEXT.TOKEN_ERZEUGT');
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['token_weg'])) {
     $ew_cfg['token'] = '';
-    ew_config_speichern($ew_cfg);
+    if (ew_config_speichern($ew_cfg)) {
+        $ew_meldung = ew_t('TEXT.TOKEN_ENTFERNT');
+    } else {
+        $ew_fehler[] = ew_t('TEXT.SICH_SCHREIBFEHLER');
+    }
     $ew_cfg = ew_config();
-    $ew_meldung = ew_t('TEXT.TOKEN_ENTFERNT');
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['pruefen'])) {
@@ -252,7 +263,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ew_zurueck'])) {
             $ew_fehler[] = ew_t('TEXT.SICH_ABGELEHNT') . ' '
                             . implode(' ', $ew_mangel);
         } elseif (ew_config_speichern($ew_neu)) {
-            $ew_meldungen[] = sprintf(ew_t('TEXT.SICH_UEBERNOMMEN'), $ew_n);
+            /* Bis 0.9.12 ging die Meldung in $ew_meldungen, das nie
+               ausgegeben wird - das Zurueckspielen wirkte ohne Bestaetigung
+               (Fall O5a, vorher rot). */
+            $ew_meldung = sprintf(ew_t('TEXT.SICH_UEBERNOMMEN'), $ew_n);
+            $ew_cfg = ew_config();
         } else {
             $ew_fehler[] = ew_t('TEXT.SICH_SCHREIBFEHLER');
         }

@@ -1,6 +1,6 @@
 # LoxBerry-Plugin „Ecowitt-Weiche"
 
-Version 0.9.12
+Version 0.9.13
 
 Holt die Messwerte einer Ecowitt-Wetterstation über **zwei** Netzwerkschnittstellen
 und reicht die Antwort derjenigen durch, die gerade trägt. In der Loxone-Projektdatei
@@ -168,6 +168,49 @@ Nachmessung am Gerät — nicht durch ein Werkzeug: `freigabe_pruefen.py` und
 `fassungslage.py` prüfen die drei `.cfg` gegeneinander und gegen das
 Tag-Archiv, die README-Kopfzeile aber nur `fassung_setzen.py`, und das
 läuft erst beim Heben der Nummer. Am Code ändert diese Fassung nichts.
+
+## Fassung 0.9.13 — Wurzel, Zweitschrift, ehrliche Meldungen
+
+Gemessen am 18.09.2026 in WSL (Ubuntu, PHP 8.3) mit 40 Fällen, jeder in einem
+eigenen Wegwerfbaum; das veröffentlichte 0.9.12 war dort in 30 Fällen rot,
+diese Fassung in keinem. Jede Korrektur wurde einzeln zurückgebaut und macht
+genau ihre Fälle rot. Die neuen Stellen sind zusätzlich unter PHP 7.4 und 8.4
+ausgeführt.
+
+**Die LoxBerry-Wurzel wird gelesen, nicht angenommen.** Ohne die Umgebungsvariable
+`LBHOMEDIR` fiel die Bibliothek bisher auf einen fest eingetragenen Gerätepfad
+zurück. In jedem anderen Baum las sie dann keine Konfiguration und arbeitete
+still auf den Vorgaben, die Sprachwahl fiel auf Deutsch zurück, und die
+Oberfläche erschien ohne LoxBerry-Rahmen. Jetzt gilt `LBHOMEDIR`, sonst wird
+vom Ablageort aufwärts der Ordner mit `config/plugins`, `data/plugins` und
+`config/system/general.json` gesucht. Findet sich keiner, schreibt das Plugin
+nirgends hin.
+
+**Die Zweitschrift wird nicht mehr mit einem leeren Stand überschrieben.** Fehlte
+die Konfiguration, war sie `{}` oder abgeschnitten, erzeugte das Plugin beim
+nächsten Abruf ein neues Wortzeichen und schrieb es über die Konfiguration
+**und** über die Zweitschrift — Adressen und Wortzeichen waren an beiden
+Stellen fort. Der Miniserver ruft alle 16 s ab; ein Abruf zwischen dem
+Abräumen des Konfigordners und `postinstall.sh` genügte. Jetzt heilt die
+Bibliothek aus der Zweitschrift, wenn diese Inhalt trägt, und hebt einen
+verdrängten Stand als `ecowitt.json.kaputt` auf. Konfiguration und Zweitschrift
+werden über eine Nebendatei geschrieben und umbenannt, mit Rechten 600 (die
+Zweitschrift entstand bisher mit 644, das Wortzeichen darin für jeden lesbar).
+
+**Die Hakenskripte entscheiden nach Inhalt.** `preupgrade.sh` kopierte die
+Konfiguration auch dann über die Zweitschrift, wenn sie nur `{}` oder
+abgeschnitten war, und bei voller Karte blieb die Zweitschrift mit 0 Byte
+zurück. `postinstall.sh` hielt eine abgeschnittene Konfiguration für gefüllt,
+weil ein Anführungszeichen darin stand, und meldete „wiederhergestellt" auch
+bei einer Zweitschrift ohne Inhalt. Der Selbsttest am Ende von `postinstall.sh`
+rief eine Funktion, die es nicht gibt, und meldete deshalb bei jeder
+Installation, der Unterbau lasse sich nicht laden.
+
+**Die Oberfläche meldet, was geschah.** „Einstellungen gespeichert", „Neues
+Wortzeichen erzeugt" und „Wortzeichen entfernt" erschienen auch, wenn nichts
+geschrieben war. Nach dem Zurückspielen einer Sicherung fehlte die Bestätigung
+ganz, und das Formular zeigte weiter die alten Werte — ein anschließendes
+„Speichern" hätte sie zurückgeschrieben.
 
 ## Lizenz
 

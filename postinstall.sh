@@ -127,6 +127,24 @@ if id loxberry >/dev/null 2>&1; then
     [ -f "$BK" ] && chown loxberry:loxberry "$BK" 2>/dev/null
 fi
 
+# Die Erstanleitung nur, wenn keine eingerichtete Konfiguration vorliegt.
+# postinstall.sh laeuft auch bei jedem Upgrade; danach war der Rat, die
+# Adressen einzutragen, falsch und legte nahe, sie seien verloren.
+# "Eingerichtet" heisst: in ecowitt.json steht nach dem Zurueckspielen
+# mindestens eine Adresse (primaer oder ersatz nicht leer). Das Wortzeichen,
+# nach dem mit_inhalt() die Zweitschrift beurteilt, reicht dafuer nicht: es
+# entsteht ohne jede Adresse. PHP ist hier sicher da - ohne PHP endet dieses
+# Skript weiter oben.
+ew_eingerichtet() {
+    php -r '$d = json_decode((string) @file_get_contents($argv[1]), true);
+        $a = function ($k) use ($d) { return isset($d[$k]) && is_string($d[$k]) && trim($d[$k]) !== ""; };
+        exit(is_array($d) && ($a("primaer") || $a("ersatz")) ? 0 : 1);' -- "$1" 2>/dev/null
+}
+if ew_eingerichtet "$CF"; then
+    echo "<OK> Installation abgeschlossen, Einstellungen uebernommen."
+    echo "<INFO> Der Reiter Test zeigt, ob beide Adressen der Station antworten."
+    exit 0
+fi
 echo "<OK> Installation abgeschlossen."
 echo "<INFO> Naechste Schritte in der Plugin-Oberflaeche:"
 echo "<INFO>  1. Reiter Einstellungen: beide Adressen der Wetterstation"

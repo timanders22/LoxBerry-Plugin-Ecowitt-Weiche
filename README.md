@@ -1,6 +1,6 @@
 # LoxBerry-Plugin „Ecowitt-Weiche"
 
-Version 0.9.13
+Version 0.9.14
 
 Holt die Messwerte einer Ecowitt-Wetterstation über **zwei** Netzwerkschnittstellen
 und reicht die Antwort derjenigen durch, die gerade trägt. In der Loxone-Projektdatei
@@ -211,6 +211,15 @@ Wortzeichen erzeugt" und „Wortzeichen entfernt" erschienen auch, wenn nichts
 geschrieben war. Nach dem Zurückspielen einer Sicherung fehlte die Bestätigung
 ganz, und das Formular zeigte weiter die alten Werte — ein anschließendes
 „Speichern" hätte sie zurückgeschrieben.
+
+## Fassung 0.9.14 — Schlusswort nach dem Update
+
+Nach einem Update fordert die Installation nicht mehr dazu auf, beide Adressen
+der Wetterstation einzutragen, wenn die Einstellungen übernommen sind. Steht
+nach dem Zurückspielen mindestens eine Adresse in der Konfiguration, meldet
+`postinstall.sh` „Einstellungen übernommen"; sonst erscheinen die nächsten
+Schritte wie bisher. In WSL nachgestellt (`Pruefung-Ecowitt-Weiche-0.9.14/`),
+nicht am Gerät.
 
 ## Lizenz
 

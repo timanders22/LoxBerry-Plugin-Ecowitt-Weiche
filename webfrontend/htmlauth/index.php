@@ -104,9 +104,36 @@ if (isset($_POST['activetab']) && in_array((string) $_POST['activetab'], $ew_rei
 }
 
 /* ---------- Eingaben verarbeiten ----------------------------------------- */
+/* ew_config() merkt sich beim ERSTEN Lesen den Zustand der Datei, vor der
+   Heilung - der Reiter Test zeigt ihn (ew_config_zustand, O5). */
 $ew_cfg = ew_config();
 $ew_meldung = '';
+$ew_hinweise = array();
 $ew_fehler = array();
+$ew_probe = null;
+$ew_post = isset($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'POST';
+
+/* Das Ergebnis der vorigen Anfrage (Einmalmeldung, O1) - NUR beim GET
+   gelesen. Beim POST hat es nichts zu suchen: ein Fehlertext von vorhin
+   landete sonst in der Sammelliste und verhinderte lautlos das naechste
+   Speichern (Regeln/04, Docker NG). */
+if (!$ew_post) {
+    $ew_einmal = ew_einmal_lesen();
+    if (is_array($ew_einmal)) {
+        if (isset($ew_einmal['meldung']) && is_string($ew_einmal['meldung'])) {
+            $ew_meldung = $ew_einmal['meldung'];
+        }
+        if (isset($ew_einmal['hinweise']) && is_array($ew_einmal['hinweise'])) {
+            $ew_hinweise = array_values($ew_einmal['hinweise']);
+        }
+        if (isset($ew_einmal['fehler']) && is_array($ew_einmal['fehler'])) {
+            $ew_fehler = array_values($ew_einmal['fehler']);
+        }
+        if (isset($ew_einmal['probe']) && is_array($ew_einmal['probe'])) {
+            $ew_probe = $ew_einmal['probe'];
+        }
+    }
+}
 
 /* ---------------------------------------------------------------- *
  * Der Wachposten - EIN Posten, vor allen Handlern.
@@ -125,46 +152,81 @@ if ($ew_wache !== '') {
     $ew_fehler[] = $ew_wache;
 }
 
-$ew_probe = null;
-
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['speichern'])) {
-    $p = ew_adresse_sauber(isset($_POST['primaer']) ? $_POST['primaer'] : '');
-    $e = ew_adresse_sauber(isset($_POST['ersatz']) ? $_POST['ersatz'] : '');
-    $roh_p = trim((string) (isset($_POST['primaer']) ? $_POST['primaer'] : ''));
-    $roh_e = trim((string) (isset($_POST['ersatz']) ? $_POST['ersatz'] : ''));
-    /* Abweisen, nicht zurechtbiegen: eine unsaubere Adresse wird gemeldet,
-       nicht stillschweigend geleert - sonst steht das Plugin ohne Quelle da
-       und niemand weiss warum. */
-    if (($roh_p !== '' && $p === '') || ($roh_e !== '' && $e === '')) {
-        $ew_fehler[] = ew_t('TEXT.ADRESSE_UNGUELTIG');
-    } else {
-        $ew_cfg['primaer'] = $p;
-        $ew_cfg['ersatz'] = $e;
-        $pf = trim((string) (isset($_POST['pfad']) ? $_POST['pfad'] : ''));
-        $ew_cfg['pfad'] = ($pf !== '' && $pf[0] === '/') ? $pf : '/get_livedata_info';
-        $ew_cfg['timeout'] = max(1, min(30, (int) (isset($_POST['timeout']) ? $_POST['timeout'] : 4)));
-        $ew_cfg['pruefe_wert'] = empty($_POST['pruefe_wert']) ? 0 : 1;
-        /* Ein LEERES Feld heisst hier NICHT "loeschen". Ein Feld, das nichts
-           anzuzeigen hat, sieht genauso aus wie eines, das jemand absichtlich
-           geleert hat - und ein Geheimnis darf sich nicht als Nebenwirkung
-           des Speicherns aendern. Zum Entfernen gibt es einen eigenen Knopf,
-           der im Namen sagt, was er tut. */
-        $tk = preg_replace('/[^A-Za-z0-9_\-]/', '', (string) (isset($_POST['token']) ? $_POST['token'] : ''));
-        if ($tk !== '') {
-            $ew_cfg['token'] = $tk;
-        }
-        /* Gemeldet wird, was geschah: bis 0.9.12 stand hier "gespeichert"
-           auch dann, wenn die Datei nicht geschrieben war (Fall O1). */
-        if (ew_config_speichern($ew_cfg)) {
-            $ew_meldung = ew_t('TEXT.GESPEICHERT');
-        } else {
-            $ew_fehler[] = ew_t('TEXT.SICH_SCHREIBFEHLER');
-        }
-        $ew_cfg = ew_config();
-    }
+/* Ein Formularfeld als Zeichenkette, am Rand gekuerzt; ein Feld (name[]=)
+   ergibt '' statt "Array". */
+function ew_feld($name)
+{
+    return (isset($_POST[$name]) && is_string($_POST[$name])) ? trim($_POST[$name]) : '';
 }
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['token_neu'])) {
+/* ---------------- Einstellungen speichern (O2) ----------------
+ *
+ * Abweisen und benennen, nie still zurechtbiegen (Regeln/05). Bis 0.9.14
+ * wurde gespeichert und "gespeichert" gemeldet: Wartezeit leer -> 1 s,
+ * 100.4 -> 30, abc -> 1; Pfad ohne / -> /get_livedata_info; aus dem
+ * Wortzeichen abc def"x'y wurde still abcdefxy; Port 99999 ging durch
+ * (Pruefer oberflaeche, Befund 4). Jetzt werden ALLE Beanstandungen
+ * gesammelt, und bei einer einzigen wird GAR NICHTS gespeichert. Leer
+ * heisst bei Wartezeit und Pfad: die Vorgabe - und das wird gesagt. */
+if ($ew_post && isset($_POST['speichern'])) {
+    $ew_neu = $ew_cfg;
+    $ew_mangel = array();
+    $ew_vg = ew_vorgaben();
+    foreach (array('primaer' => 'TEXT.L_PRIMAER', 'ersatz' => 'TEXT.L_ERSATZ') as $ew_s => $ew_l) {
+        $ew_roh = ew_feld($ew_s);
+        if ($ew_roh !== '' && ew_adresse_pruefen($ew_roh) === '') {
+            $ew_mangel[] = sprintf(ew_t('TEXT.ADRESSE_FELD_UNGUELTIG'), ew_t($ew_l), ew_kurz($ew_roh, 60));
+        } else {
+            $ew_neu[$ew_s] = $ew_roh;
+        }
+    }
+    $ew_roh = ew_feld('pfad');
+    if ($ew_roh === '') {
+        $ew_neu['pfad'] = $ew_vg['pfad'];
+        $ew_hinweise[] = ew_t('TEXT.PFAD_VORGABE');
+    } elseif (!ew_pfad_taugt($ew_roh)) {
+        $ew_mangel[] = sprintf(ew_t('TEXT.PFAD_UNGUELTIG'), ew_kurz($ew_roh, 60));
+    } else {
+        $ew_neu['pfad'] = $ew_roh;
+    }
+    $ew_roh = ew_feld('timeout');
+    if ($ew_roh === '') {
+        $ew_neu['timeout'] = $ew_vg['timeout'];
+        $ew_hinweise[] = ew_t('TEXT.TIMEOUT_VORGABE');
+    } elseif (ew_timeout_wert($ew_roh) === null) {
+        $ew_mangel[] = sprintf(ew_t('TEXT.TIMEOUT_UNGUELTIG'), ew_kurz($ew_roh, 20));
+    } else {
+        $ew_neu['timeout'] = ew_timeout_wert($ew_roh);
+    }
+    $ew_neu['pruefe_wert'] = empty($_POST['pruefe_wert']) ? 0 : 1;
+    /* Ein LEERES Feld heisst hier NICHT "loeschen". Ein Feld, das nichts
+       anzuzeigen hat, sieht genauso aus wie eines, das jemand absichtlich
+       geleert hat - und ein Geheimnis darf sich nicht als Nebenwirkung
+       des Speicherns aendern. Zum Entfernen gibt es einen eigenen Knopf,
+       der im Namen sagt, was er tut. Ein Wert mit fremden Zeichen wird
+       abgewiesen, nicht gekuerzt (Regeln/05 Z. 186). */
+    $ew_roh = ew_feld('token');
+    if ($ew_roh !== '') {
+        if (!ew_token_taugt($ew_roh)) {
+            $ew_mangel[] = sprintf(ew_t('TEXT.TOKEN_UNGUELTIG'), strlen($ew_roh));
+        } else {
+            $ew_neu['token'] = $ew_roh;
+        }
+    }
+    if ($ew_mangel) {
+        $ew_hinweise = array();
+        $ew_fehler[] = array('kopf' => ew_t('TEXT.NICHT_GESPEICHERT'), 'punkte' => $ew_mangel);
+    } elseif (ew_config_speichern($ew_neu)) {
+        /* Gemeldet wird, was geschah: bis 0.9.12 stand hier "gespeichert"
+           auch dann, wenn die Datei nicht geschrieben war (Fall O1). */
+        $ew_meldung = ew_t('TEXT.GESPEICHERT');
+    } else {
+        $ew_fehler[] = ew_t('TEXT.SICH_SCHREIBFEHLER');
+    }
+    $ew_cfg = ew_config();
+}
+
+if ($ew_post && isset($_POST['token_neu'])) {
     $ew_cfg['token'] = ew_token_erzeugen();
     if (ew_config_speichern($ew_cfg)) {
         $ew_meldung = ew_t('TEXT.TOKEN_ERZEUGT');
@@ -174,7 +236,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['token_neu'])) {
     $ew_cfg = ew_config();
 }
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['token_weg'])) {
+if ($ew_post && isset($_POST['token_weg'])) {
     $ew_cfg['token'] = '';
     if (ew_config_speichern($ew_cfg)) {
         $ew_meldung = ew_t('TEXT.TOKEN_ENTFERNT');
@@ -184,52 +246,54 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['token_weg'])) {
     $ew_cfg = ew_config();
 }
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['pruefen'])) {
+/* ---------------- Abruftest (O4) ----------------
+ * Derselbe Abruf und dieselbe Beurteilung wie im Endpunkt, mit demselben
+ * Schalter "Inhalt pruefen". Bis 0.9.14 pruefte der Test die Aussenfeuchte
+ * immer - bei ausgeschaltetem Schalter stand er rot, waehrend live.php
+ * Daten lieferte (Pruefer oberflaeche, Befund 7). Der Grund wird getrennt
+ * genannt: keine Verbindung, Zeitueberschreitung, HTTP-Status, Umleitung,
+ * HTML statt JSON, Platzhalter. */
+if ($ew_post && isset($_POST['pruefen'])) {
     $ew_probe = array();
+    $ew_inhalt = !empty($ew_cfg['pruefe_wert']);
     foreach (array('primaer', 'ersatz') as $seite) {
         $adr = ew_adresse_sauber($ew_cfg[$seite]);
         if ($adr === '') {
             $ew_probe[$seite] = array('adr' => '', 'ok' => false, 'text' => ew_t('TEXT.KEINE_ADRESSE'));
             continue;
         }
-        $t0 = microtime(true);
-        $roh = ew_abrufen($adr, $ew_cfg['pfad'], $ew_cfg['timeout']);
-        $ms = (int) round((microtime(true) - $t0) * 1000);
+        $info = null;
+        $roh = ew_abrufen($adr, $ew_cfg['pfad'], $ew_cfg['timeout'], $info);
         if ($roh === false) {
-            $ew_probe[$seite] = array('adr' => $adr, 'ok' => false, 'ms' => $ms,
-                                      'text' => ew_t('TEXT.KEINE_ANTWORT'));
+            $ew_probe[$seite] = array('adr' => $adr, 'ok' => false, 'ms' => $info['ms'],
+                                      'text' => ew_abruf_text($info));
             continue;
         }
         $grund = '';
-        $gut = ew_brauchbar($roh, $grund);
+        $gut = ew_brauchbar($roh, $grund, $ew_inhalt);
         $werte = array();
         $d = json_decode($roh, true);
-        if (is_array($d) && isset($d['common_list'])) {
+        if (is_array($d) && isset($d['common_list']) && is_array($d['common_list'])) {
             foreach ($d['common_list'] as $x) {
-                if (isset($x['id']) && in_array($x['id'], array('0x02', '0x07', '0x15', '0x17'), true)) {
-                    $werte[$x['id']] = isset($x['val']) ? (string) $x['val'] : '';
+                if (is_array($x) && isset($x['id']) && in_array($x['id'], array('0x02', '0x07', '0x15', '0x17'), true)) {
+                    $werte[$x['id']] = (isset($x['val']) && !is_array($x['val'])) ? (string) $x['val'] : '';
                 }
             }
         }
-        $ew_probe[$seite] = array('adr' => $adr, 'ok' => $gut, 'ms' => $ms,
-                                  'text' => $gut ? ew_t('TEXT.BRAUCHBAR') : $grund, 'werte' => $werte);
+        $ew_probe[$seite] = array('adr' => $adr, 'ok' => $gut, 'ms' => $info['ms'],
+            'text' => $gut ? ew_t($ew_inhalt ? 'TEXT.BRAUCHBAR' : 'TEXT.BRAUCHBAR_OHNE_PRUEFUNG') : $grund,
+            'werte' => $werte);
     }
 }
-
-$ew_stand = ew_stand_lesen();
-$ew_host = isset($_SERVER['HTTP_HOST']) && $_SERVER['HTTP_HOST'] !== '' ? $_SERVER['HTTP_HOST'] : 'loxberry';
-$ew_plugin = ew_paths()['plugin'];
-$ew_tokenteil = $ew_cfg['token'] !== '' ? '?token=' . rawurlencode($ew_cfg['token']) : '';
-
-$ew_rahmen = class_exists('LBWeb', false);
 
 /* ---------------- Einstellungen sichern ----------------
  *
  * Ausgegeben wird die VOLLE Konfiguration - samt Aktionstoken. Ohne ihn
  * stuenden nach dem Zurueckspielen alle Felder richtig, und das Plugin
  * kaeme trotzdem nicht an die Anlage; die Datei waere wertlos. Damit
- * traegt sie ein Geheimnis, und der Hinweis am Knopf sagt das. */
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ew_sichern'])) {
+ * traegt sie ein Geheimnis, und der Hinweis am Knopf sagt das.
+ * Der Download ist die eine Antwort ohne Umleitung (Regeln/04). */
+if ($ew_post && isset($_POST['ew_sichern'])) {
     $ew_js = json_encode(ew_config(),
         JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     if ($ew_js !== false) {
@@ -242,37 +306,80 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ew_sichern'])) {
     $ew_fehler[] = ew_t('TEXT.SICH_SCHREIBFEHLER');
 }
 
-/* ---------------- Einstellungen zurueckspielen ----------------
+/* ---------------- Einstellungen zurueckspielen (C1) ----------------
  *
  * is_uploaded_file() ZUERST: ohne diese Pruefung liesse sich jede Datei des
  * Servers unterschieben. Dann die Groessengrenze - eine Sicherung dieses
- * Plugins ist wenige Kilobyte gross; alles darueber wird gar nicht gelesen. */
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ew_zurueck'])) {
+ * Plugins ist wenige Kilobyte gross; alles darueber wird gar nicht gelesen.
+ *
+ * "Uebernommen" heisst seit 0.9.15: Konfiguration UND Zweitschrift sind
+ * geschrieben, und ein erneutes Lesen zeigt den zurueckgespielten Stand.
+ * Bis 0.9.14 kam die Meldung, auch wenn ew_config() den Stand im selben
+ * Aufruf aus der Zweitschrift zurueckgeheilt hatte (Pruefer code, Befund 2). */
+if ($ew_post && isset($_POST['ew_zurueck'])) {
     if (!isset($_FILES['ew_sicherung']) || !is_array($_FILES['ew_sicherung'])
-        || !isset($_FILES['ew_sicherung']['tmp_name'])
+        || !isset($_FILES['ew_sicherung']['tmp_name']) || !is_string($_FILES['ew_sicherung']['tmp_name'])
         || !@is_uploaded_file($_FILES['ew_sicherung']['tmp_name'])) {
         $ew_fehler[] = ew_t('TEXT.SICH_KEINE_DATEI');
     } elseif ((int) $_FILES['ew_sicherung']['size'] > 262144) {
         $ew_fehler[] = ew_t('TEXT.SICH_ZU_GROSS');
     } else {
-        list($ew_neu, $ew_mangel, $ew_n) = ew_sicherung_lesen(
+        list($ew_neu, $ew_mangel, $ew_n, $ew_hinw) = ew_sicherung_lesen(
             (string) @file_get_contents($_FILES['ew_sicherung']['tmp_name']));
         if ($ew_neu === null) {
             /* ALLE Beanstandungen, nicht nur die erste - und geaendert wird
              * nichts. */
-            $ew_fehler[] = ew_t('TEXT.SICH_ABGELEHNT') . ' '
-                            . implode(' ', $ew_mangel);
-        } elseif (ew_config_speichern($ew_neu)) {
-            /* Bis 0.9.12 ging die Meldung in $ew_meldungen, das nie
-               ausgegeben wird - das Zurueckspielen wirkte ohne Bestaetigung
-               (Fall O5a, vorher rot). */
-            $ew_meldung = sprintf(ew_t('TEXT.SICH_UEBERNOMMEN'), $ew_n);
-            $ew_cfg = ew_config();
+            $ew_fehler[] = array('kopf' => ew_t('TEXT.SICH_ABGELEHNT'), 'punkte' => $ew_mangel);
         } else {
-            $ew_fehler[] = ew_t('TEXT.SICH_SCHREIBFEHLER');
+            $ew_zweit = false;
+            if (!ew_config_speichern($ew_neu, $ew_zweit)) {
+                $ew_fehler[] = ew_t('TEXT.SICH_SCHREIBFEHLER');
+            } elseif (!$ew_zweit) {
+                $ew_fehler[] = ew_t('TEXT.SICH_ZWEIT_FEHLT');
+            } else {
+                $ew_datei = ew_json_lesen(ew_paths()['cfgdatei']);
+                $ew_cfg = ew_config();
+                $ew_gleich = is_array($ew_datei);
+                foreach (array_keys(ew_vorgaben()) as $ew_k) {
+                    if (!$ew_gleich) {
+                        break;
+                    }
+                    $ew_gleich = array_key_exists($ew_k, $ew_datei)
+                        && $ew_datei[$ew_k] === $ew_neu[$ew_k] && $ew_cfg[$ew_k] === $ew_neu[$ew_k];
+                }
+                if ($ew_gleich) {
+                    $ew_meldung = sprintf(ew_t('TEXT.SICH_UEBERNOMMEN'), $ew_n);
+                    $ew_hinweise = array_merge($ew_hinweise, $ew_hinw);
+                } else {
+                    $ew_fehler[] = ew_t('TEXT.SICH_NICHT_WIRKSAM');
+                }
+            }
         }
     }
 }
+
+/* ---------------- Umleitung nach jedem POST (O1, PRG) ----------------
+ * Jeder POST endet mit 303 auf index.php?form=<reiter>; das Ergebnis reist
+ * als Einmalmeldung. Neuladen holt dann nur die Seite, es wiederholt keine
+ * Handlung. Laesst sich die Einmalmeldung nicht ablegen (Datenordner nicht
+ * beschreibbar), wird die Seite wie bis 0.9.14 gleich gezeigt, mit einem
+ * Hinweis: lieber ein Neuladen, das nachfragt, als eine verlorene Meldung. */
+if ($ew_post) {
+    $ew_m = array('meldung' => $ew_meldung, 'hinweise' => $ew_hinweise,
+                  'fehler' => $ew_fehler, 'probe' => $ew_probe);
+    if (ew_einmal_schreiben($ew_m)) {
+        header('Location: index.php?form=' . rawurlencode(substr($ew_tab, 4)), true, 303);
+        exit;
+    }
+    $ew_hinweise[] = ew_t('TEXT.EINMAL_FEHLT');
+}
+
+$ew_stand = ew_stand_lesen();
+$ew_host = isset($_SERVER['HTTP_HOST']) && $_SERVER['HTTP_HOST'] !== '' ? $_SERVER['HTTP_HOST'] : 'loxberry';
+$ew_plugin = ew_paths()['plugin'];
+$ew_tokenteil = $ew_cfg['token'] !== '' ? '?token=' . rawurlencode($ew_cfg['token']) : '';
+
+$ew_rahmen = class_exists('LBWeb', false);
 
 
 if ($ew_rahmen) {
@@ -306,6 +413,8 @@ if ($ew_rahmen) {
 .sm-tbl { border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 0.9em; }
 .sm-tbl th, .sm-tbl td { border: 1px solid #ccc; padding: 5px 7px; text-align: left; vertical-align: top; }
 .sm-tbl th { background: #eef3e6; font-weight: 600; }
+.sm-breit { overflow-x: auto; -webkit-overflow-scrolling: touch; margin: 10px 0; }
+.sm-breit .sm-tbl { margin: 0; min-width: 760px; }
 .sm-mono { font-family: Consolas, "Courier New", monospace; background: #f0f0f0;
     padding: 1px 4px; border-radius: 3px; font-size: 0.94em; word-break: break-all; }
 .sm-pre { background: #f4f4f4; border: 1px solid #ccc; padding: 10px; font-size: 0.85em;
@@ -356,7 +465,14 @@ if ($ew_rahmen) {
 <div class="sm-wrap">
 
 <?php if ($ew_meldung !== '') { ?><div class="sm-hinweis"><?= ew_e($ew_meldung) ?></div><?php } ?>
-<?php foreach ($ew_fehler as $ew_fehler_m) { ?><div class="sm-fehler"><?= ew_e($ew_fehler_m) ?></div><?php } ?>
+<?php foreach ($ew_hinweise as $ew_h) { if (is_string($ew_h)) { ?><div class="sm-warnung"><?= ew_e($ew_h) ?></div><?php } } ?>
+<?php foreach ($ew_fehler as $ew_fehler_m) {
+    if (is_array($ew_fehler_m)) {
+        $ew_kopf = isset($ew_fehler_m['kopf']) && is_string($ew_fehler_m['kopf']) ? $ew_fehler_m['kopf'] : '';
+        $ew_punkte = isset($ew_fehler_m['punkte']) && is_array($ew_fehler_m['punkte']) ? $ew_fehler_m['punkte'] : array(); ?>
+<div class="sm-fehler"><?= ew_e($ew_kopf) ?><ul><?php foreach ($ew_punkte as $ew_p) { if (is_string($ew_p)) { ?><li><?= ew_e($ew_p) ?></li><?php } } ?></ul></div>
+<?php } elseif (is_string($ew_fehler_m)) { ?><div class="sm-fehler"><?= ew_e($ew_fehler_m) ?></div><?php }
+} ?>
 
 <!-- Die Reiterleiste steht AUSGESCHRIEBEN da, nicht in einer Schleife
      erzeugt. Umgeschaltet wird ueber den Server, damit jeder Reiter
@@ -465,24 +581,36 @@ if ($ew_rahmen) {
 <h3><?php echo ew_t('TEXT.LOX_STATUS'); ?></h3>
 <p><span class="sm-mono">http://<?= ew_e($ew_host) ?>/plugins/<?= ew_e($ew_plugin) ?>/live.php?status=1<?= $ew_cfg['token'] !== '' ? '&amp;token=' . ew_e(rawurlencode($ew_cfg['token'])) : '' ?></span></p>
 <table class="sm-tbl">
-  <tr><th><?php echo ew_t('TEXT.FELD'); ?></th><th><?php echo ew_t('TEXT.BEDEUTUNG'); ?></th><th>Min</th><th>Max</th></tr>
-  <tr><td class="sm-mono">OK</td><td><?php echo ew_t('FELD.OK'); ?></td><td>0</td><td>1</td></tr>
-  <tr><td class="sm-mono">QUELLE</td><td><?php echo ew_t('FELD.QUELLE'); ?></td><td>0</td><td>2</td></tr>
-  <tr><td class="sm-mono">WECHSEL</td><td><?php echo ew_t('FELD.WECHSEL'); ?></td><td>0</td><td>100000</td></tr>
-  <tr><td class="sm-mono">ALTER</td><td><?php echo ew_t('FELD.ALTER'); ?></td><td>-1</td><td>1000000</td></tr>
+  <tr><th><?php echo ew_t('TEXT.FELD'); ?></th><th><?php echo ew_t('TEXT.BEDEUTUNG'); ?></th><th><?php echo ew_t('TEXT.LOX_SUCHTEXT'); ?></th><th>Min</th><th>Max</th></tr>
+  <tr><td class="sm-mono">OK</td><td><?php echo ew_t('FELD.OK'); ?></td><td class="sm-mono"><?= ew_e(ew_suchtext('OK')) ?></td><td>0</td><td>1</td></tr>
+  <tr><td class="sm-mono">QUELLE</td><td><?php echo ew_t('FELD.QUELLE'); ?></td><td class="sm-mono"><?= ew_e(ew_suchtext('QUELLE')) ?></td><td>0</td><td>2</td></tr>
+  <tr><td class="sm-mono">WECHSEL</td><td><?php echo ew_t('FELD.WECHSEL'); ?></td><td class="sm-mono"><?= ew_e(ew_suchtext('WECHSEL')) ?></td><td>0</td><td>100000</td></tr>
+  <tr><td class="sm-mono">ALTER</td><td><?php echo ew_t('FELD.ALTER'); ?></td><td class="sm-mono"><?= ew_e(ew_suchtext('ALTER')) ?></td><td>-1</td><td>1000000</td></tr>
 </table>
+<p class="sm-hilfe"><?php printf(ew_t('TEXT.LOX_SUCHTEXT_HILFE'), '<span class="sm-mono">' . ew_e('OK=\v') . '</span>'); ?></p>
 <div class="sm-warnung"><?php echo ew_t('TEXT.LOX_MINVAL'); ?></div>
+
+<h3><?php echo ew_t('TEXT.LOX_AUSFALL_H'); ?></h3>
+<div class="sm-step"><?php echo ew_t('TEXT.LOX_503'); ?></div>
+<div class="sm-warnung"><?php printf(ew_t('TEXT.LOX_TIMEOUT'), ew_behaelter_timeout_ms($ew_cfg), ew_gesamtfrist($ew_cfg), (int) $ew_cfg['timeout'], EW_GESAMTFRIST); ?></div>
+<div class="sm-hinweis"><?php echo ew_t('TEXT.LOX_EWOK'); ?></div>
 </div>
 
 <!-- ================= Test und Protokoll ================= -->
 <div class="sm-seite<?= $ew_tab === 'tab-test' ? ' sm-active' : '' ?>" id="tab-test">
 <h2><?php echo ew_t('TEXT.H_TEST'); ?></h2>
 
-<?php if (!empty($ew_stand)) { ?>
+<?php if (!empty($ew_stand)) {
+    /* Datum UND Alter, nicht nur die Uhrzeit: drei Tage alte Daten sahen
+       bis 0.9.14 frisch aus (Pruefer oberflaeche, Befund 9). */
+    $ew_lg = isset($ew_stand['letzte_gute']) ? (int) $ew_stand['letzte_gute'] : 0;
+    $ew_ts = isset($ew_stand['ts']) ? (int) $ew_stand['ts'] : 0;
+    $ew_q = isset($ew_stand['quelle']) ? $ew_stand['quelle'] : ''; ?>
 <div class="sm-kacheln">
-  <div class="sm-kachel"><b><?= $ew_stand['quelle'] === 'primaer' ? ew_t('TEXT.PRIMAER') : ($ew_stand['quelle'] === 'ersatz' ? ew_t('TEXT.ERSATZ') : '—') ?></b><span><?php echo ew_t('TEXT.TRAEGT_GERADE'); ?></span></div>
+  <div class="sm-kachel"><b><?= $ew_q === 'primaer' ? ew_t('TEXT.PRIMAER') : ($ew_q === 'ersatz' ? ew_t('TEXT.ERSATZ') : '—') ?></b><span><?php echo ew_t('TEXT.TRAEGT_GERADE'); ?></span></div>
   <div class="sm-kachel"><b><?= (int) (isset($ew_stand['wechsel']) ? $ew_stand['wechsel'] : 0) ?></b><span><?php echo ew_t('TEXT.WECHSEL_GESAMT'); ?></span></div>
-  <div class="sm-kachel"><b><?= empty($ew_stand['letzte_gute']) ? '—' : date('H:i:s', (int) $ew_stand['letzte_gute']) ?></b><span><?php echo ew_t('TEXT.LETZTE_GUTE'); ?></span></div>
+  <div class="sm-kachel"><b><?= $ew_lg > 0 ? ew_e(date('d.m.Y H:i:s', $ew_lg)) : '—' ?></b><span><?php echo ew_t('TEXT.LETZTE_GUTE'); ?><?= $ew_lg > 0 ? ' (' . ew_e(ew_alter_text(time() - $ew_lg)) . ')' : '' ?></span></div>
+  <div class="sm-kachel"><b><?= $ew_ts > 0 ? ew_e(date('d.m.Y H:i:s', $ew_ts)) : '—' ?></b><span><?php echo ew_t('TEXT.LETZTER_ABRUF'); ?><?= $ew_ts > 0 ? ' (' . ew_e(ew_alter_text(time() - $ew_ts)) . ')' : '' ?></span></div>
 </div>
 <?php } ?>
 
@@ -495,23 +623,25 @@ if ($ew_rahmen) {
 <div class="sm-legende"><span><i class="sm-punkt sm-b-lesen"></i> <?php echo ew_t('LEGENDE.LESEN'); ?></span></div>
 </form>
 
-<?php if ($ew_probe !== null) { ?>
+<?php if (is_array($ew_probe)) { ?>
+<div class="sm-breit">
 <table class="sm-tbl">
   <tr><th><?php echo ew_t('TEXT.SCHNITTSTELLE'); ?></th><th><?php echo ew_t('TEXT.ADRESSE'); ?></th>
       <th><?php echo ew_t('TEXT.ERGEBNIS'); ?></th><th>0x02</th><th>0x07</th><th>0x15</th><th>0x17</th></tr>
-<?php foreach ($ew_probe as $seite => $r) { ?>
+<?php foreach ($ew_probe as $seite => $r) { if (!is_array($r)) { continue; } ?>
   <tr>
     <td><?= $seite === 'primaer' ? ew_t('TEXT.PRIMAER') : ew_t('TEXT.ERSATZ') ?></td>
-    <td class="sm-mono"><?= ew_e($r['adr']) ?></td>
-    <td><?= $r['ok'] ? '<span class="sm-an">' . ew_e($r['text']) . '</span>'
-                     : '<span class="sm-aus">' . ew_e($r['text']) . '</span>' ?>
+    <td class="sm-mono"><?= ew_e(isset($r['adr']) ? $r['adr'] : '') ?></td>
+    <td><?= !empty($r['ok']) ? '<span class="sm-an">' . ew_e(isset($r['text']) ? $r['text'] : '') . '</span>'
+                             : '<span class="sm-aus">' . ew_e(isset($r['text']) ? $r['text'] : '') . '</span>' ?>
         <?= isset($r['ms']) ? ' <span class="sm-grau">(' . (int) $r['ms'] . ' ms)</span>' : '' ?></td>
 <?php   foreach (array('0x02', '0x07', '0x15', '0x17') as $id) { ?>
-    <td class="sm-mono"><?= isset($r['werte'][$id]) ? ew_e($r['werte'][$id]) : '—' ?></td>
+    <td class="sm-mono"><?= (isset($r['werte'][$id]) && is_string($r['werte'][$id])) ? ew_e($r['werte'][$id]) : '—' ?></td>
 <?php   } ?>
   </tr>
 <?php } ?>
 </table>
+</div>
 <p class="sm-hilfe"><?php echo ew_t('TEXT.PROBE_HILFE'); ?></p>
 <?php } ?>
 
@@ -533,9 +663,19 @@ $ew_soll = $ew_reiter;
 sort($ew_soll);
 $ew_selbst[] = array(
     'was' => ew_t('TEXT.S_REITER'),
-    'ok'  => ($ew_leiste === $ew_flaechen && $ew_leiste === $ew_soll),
+    'ok'  => ($ew_leiste && $ew_leiste === $ew_flaechen && $ew_leiste === $ew_soll),
     'wie' => sprintf('%d / %d / %d', count($ew_leiste), count($ew_flaechen), count($ew_soll)),
 );
+
+/* Die Konfiguration, wie ew_config() sie beim ERSTEN Lesen in diesem
+   Aufruf vorfand - vor der Heilung (Regeln/05, Robonect 1.1.0). */
+$ew_r = ew_pruef_konfiguration(ew_config_zustand());
+$ew_selbst[] = array('was' => ew_t('TEXT.S_KONFIG'), 'lage' => $ew_r[0], 'wie' => $ew_r[1]);
+
+/* Jedes POST-Formular dieser Datei traegt das Merkmal (gezaehlt, nicht
+   angenommen; eine leere Menge ist ein Kreuz). */
+$ew_r = ew_pruef_formulare($ew_quelle);
+$ew_selbst[] = array('was' => ew_t('TEXT.S_FORMULARE'), 'lage' => $ew_r[0], 'wie' => $ew_r[1]);
 
 /* Der Endpunkt liegt in webfrontend/html, die Oberflaeche in htmlauth -
    zwei getrennte Baeume. Ein Plugin, dessen Oberflaeche laeuft und dessen
@@ -554,6 +694,13 @@ $ew_selbst[] = array(
     'wie' => $ew_da ? $ew_endp : ew_t('TEXT.S_NICHT_GEFUNDEN'),
 );
 
+/* Antwortet der Endpunkt wirklich? Ein echter Aufruf ueber 127.0.0.1
+   (?selftest=1, fragt keine Station). Nur wenn der Reiter Test der offene
+   ist - alle Reiter werden mitgerendert (Regeln/04). */
+$ew_r = ($ew_tab === 'tab-test') ? ew_pruef_endpunkt($ew_cfg['token'])
+      : array('hinweis', ew_t('TEST.EP_NUR_OFFEN'));
+$ew_selbst[] = array('was' => ew_t('TEXT.S_ANTWORTET'), 'lage' => $ew_r[0], 'wie' => $ew_r[1]);
+
 $ew_cfgdatei = ew_paths()['cfgdatei'];
 $ew_schreib = is_writable(is_file($ew_cfgdatei) ? $ew_cfgdatei : dirname($ew_cfgdatei));
 $ew_selbst[] = array(
@@ -571,11 +718,13 @@ $ew_selbst[] = array(
 ?>
 <table class="sm-tbl">
   <tr><th><?php echo ew_t('TEXT.PRUEFPUNKT'); ?></th><th><?php echo ew_t('TEXT.ERGEBNIS'); ?></th><th><?php echo ew_t('TEXT.GEMESSEN'); ?></th></tr>
-<?php foreach ($ew_selbst as $ew_z) { ?>
+<?php foreach ($ew_selbst as $ew_z) {
+    $ew_l = isset($ew_z['lage']) ? $ew_z['lage'] : ($ew_z['ok'] ? 'ok' : 'fehl'); ?>
   <tr>
     <td><?= ew_e($ew_z['was']) ?></td>
-    <td><?= $ew_z['ok'] ? '<span class="sm-an">' . ew_e(ew_t('TEXT.S_OK')) . '</span>'
-                        : '<span class="sm-aus">' . ew_e(ew_t('TEXT.S_NOK')) . '</span>' ?></td>
+    <td><?= $ew_l === 'ok' ? '<span class="sm-an">' . ew_e(ew_t('TEXT.S_OK')) . '</span>'
+          : ($ew_l === 'hinweis' ? '<span class="sm-grau">' . ew_e(ew_t('TEXT.S_HINWEIS')) . '</span>'
+                                 : '<span class="sm-aus">' . ew_e(ew_t('TEXT.S_NOK')) . '</span>') ?></td>
     <td class="sm-mono"><?= ew_e($ew_z['wie']) ?></td>
   </tr>
 <?php } ?>

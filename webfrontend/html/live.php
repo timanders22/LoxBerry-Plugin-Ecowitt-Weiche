@@ -13,7 +13,12 @@
  * Behaelters.
  *
  *   "ew_quelle": "primaer" | "ersatz"     welche Schnittstelle getragen hat
- *   "ew_ok":     1                        Daten sind brauchbar
+ *   "ew_ok":     1                        steht in JEDER Antwort mit Daten
+ *
+ * ew_ok ist KEIN Ausfallmerker (C10): bei Ausfall kommt 503 ohne Daten, und
+ * Loxone behaelt die letzte 1. Fuer den Ausfall zaehlen der Onlinestatus
+ * des Behaelters oder OK= aus ?status=1. Das Feld bleibt, damit kein
+ * vorhandener Suchtext bricht.
  *
  * FAELLT BEIDES AUS, kommt HTTP 503 OHNE Daten. Das ist Absicht: Loxone
  * behaelt dann seine letzten Werte und schaltet den Onlinestatus des
@@ -24,19 +29,38 @@
  * Lesender Aufruf, deshalb ohne Zwang zum Token. Ist in der Oberflaeche eines
  * hinterlegt, gilt es auch hier.
  *
+ * Der Endpunkt schreibt nichts, bevor die Anfrage angenommen ist (C7): die
+ * Konfiguration wird ohne Heilung und ohne Anlegen gelesen. Fehlt sie oder
+ * ist sie unlesbar, kommt 503 "nicht eingerichtet"; das erste Wortzeichen
+ * legt die Oberflaeche an.
+ *
+ *   /plugins/<Ordner>/live.php?selftest=1   fuer den Reiter Test: prueft nur
+ *                                           Token und Konfiguration, fragt
+ *                                           keine Station
+ *
  * (c) Ecowitt-Weiche Plugin Authors - MIT-Lizenz
  */
 
 require_once __DIR__ . '/ew_lib.php';
 
-$ew_cfg = ew_config();
+$ew_cfg = ew_config(false);
+if ($ew_cfg === null) {
+    header('HTTP/1.1 503 Service Unavailable');
+    header('Content-Type: text/plain; charset=utf-8');
+    echo "Nicht eingerichtet: die Konfiguration fehlt oder ist unlesbar. Bitte die Plugin-Oberflaeche einmal oeffnen.\n";
+    exit;
+}
 
 /* Token nur pruefen, wenn eines gesetzt ist. hash_equals statt == : ein
-   zeichenweiser Vergleich verraet ueber die Antwortzeit Zeichen fuer Zeichen. */
-$ew_soll = (string) $ew_cfg['token'];
+   zeichenweiser Vergleich verraet ueber die Antwortzeit Zeichen fuer Zeichen.
+   Nur eine Zeichenkette ist ein Token (C2). Bis 0.9.14 machte (string) aus
+   token[]=x ein "Array" - mit display_errors=1 ging die Warnung vor dem
+   header() hinaus, und die Abweisung kam als HTTP 200 an (Pruefer code,
+   Befund 5). ew_config(false) liefert das Soll nur als Zeichenkette. */
+$ew_soll = $ew_cfg['token'];
 if ($ew_soll !== '') {
-    $ew_ist = isset($_GET['token']) ? (string) $_GET['token'] : '';
-    if (!hash_equals($ew_soll, $ew_ist)) {
+    $ew_ist = (isset($_GET['token']) && is_string($_GET['token'])) ? $_GET['token'] : '';
+    if ($ew_ist === '' || !hash_equals($ew_soll, $ew_ist)) {
         header('HTTP/1.1 403 Forbidden');
         header('Content-Type: text/plain; charset=utf-8');
         echo "Zugriff verweigert: falsches oder fehlendes Token.\n";
@@ -44,7 +68,15 @@ if ($ew_soll !== '') {
     }
 }
 
-$ew_w = ew_weiche();
+/* Selbsttest fuer den Reiter Test: Token und Konfiguration stimmen, der
+   Endpunkt laeuft. Keine Station, kein Schreiben. */
+if (isset($_GET['selftest'])) {
+    header('Content-Type: text/plain; charset=utf-8');
+    echo 'SELFTEST;OK=1;TOKEN=' . ($ew_soll !== '' ? 'OK' : 'OHNE') . "\n";
+    exit;
+}
+
+$ew_w = ew_weiche($ew_cfg, ew_stand_lesen());
 $ew_stand = ew_stand_schreiben($ew_w);
 
 /* Kurzform fuer die Diagnose und fuer einen eigenen Loxone-Eingang:

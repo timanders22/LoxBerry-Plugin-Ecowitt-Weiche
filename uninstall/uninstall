@@ -8,26 +8,63 @@
 # ist eindeutig: wer neben dem Ordner ablegt, um ein Upgrade zu ueberleben,
 # raeumt beim Deinstallieren selbst auf. Beim WifiScanner blieb so eine
 # Anwesenheitsliste des Haushalts liegen.
+#
+# Der Ordnername kommt NUR aus $3 (sonst die Vorgabe), nie aus dem Ablageort:
+# installiert liegt dieses Skript unter data/system/uninstall/<name>, und der
+# Ablageort ergaebe den Ordner "system". Bis 0.9.14 loeschte der Rueckfall
+# ohne $5 und LBHOMEDIR data/plugins/system und meldete trotzdem <OK> (in WSL
+# gemessen, Pruefer installer, Befund 5; Regeln/06).
 ARGV3=$3
 ARGV5=$5
 PFOLDER="${ARGV3:-ecowittweiche}"
+case "$PFOLDER" in
+    ''|*/*|*..*|system)
+        echo "<WARNING> Unzulaessiger Ordnername '$PFOLDER' - nichts entfernt."
+        exit 0 ;;
+esac
 BASE="${ARGV5:-$LBHOMEDIR}"
-if [ -z "$BASE" ] || [ ! -d "$BASE" ]; then
+if [ -z "$BASE" ]; then
+    # Rueckfall: data/system/uninstall/<name> liegt drei Ebenen unter der Wurzel.
     SELF=$(cd "$(dirname "$0")" && pwd)
-    PFOLDER=$(basename "$(cd "$SELF/.." && pwd)")
     BASE=$(cd "$SELF/../../.." 2>/dev/null && pwd)
 fi
-
-ENTFERNT=0
-if [ -n "$BASE" ] && [ -f "$BASE/config/plugins/$PFOLDER.backup.json" ]; then
-    rm -f "$BASE/config/plugins/$PFOLDER.backup.json" 2>/dev/null && ENTFERNT=1
+# Wurzelpruefung wie in preinstall.sh: ohne config/plugins, data/plugins UND
+# config/system/general.json wird nichts angefasst, nur gewarnt.
+if [ -z "$BASE" ] || [ ! -d "$BASE/config/plugins" ] || [ ! -d "$BASE/data/plugins" ] \
+   || [ ! -f "$BASE/config/system/general.json" ]; then
+    echo "<WARNING> Kein LoxBerry-Wurzelverzeichnis erkannt ('$BASE') - nichts entfernt."
+    echo "<WARNING> Bitte von Hand nachsehen: config/plugins/$PFOLDER.backup.json* und data/plugins/$PFOLDER.*"
+    exit 0
 fi
-[ -n "$BASE" ] && rm -rf "$BASE/data/plugins/$PFOLDER" 2>/dev/null
 
-if [ "$ENTFERNT" = "1" ]; then
-    echo "<OK> Ecowitt-Weiche entfernt, Sicherung mit dem Wortzeichen geloescht."
+# Alles, was dieses Plugin NEBEN seine Ordner legt (I3): die Zweitschrift mit
+# dem Wortzeichen, ihre .alt aus einer Neuinstallation, Nebendateien eines
+# abgebrochenen Schreibens (.tmp.<pid> aus ew_json_schreiben, .neu.<pid> aus
+# preupgrade.sh), die beiseitegelegte unlesbare Konfiguration, die
+# Upgrade-Marke und der gesicherte Wechselzaehler. Bis 0.9.14 blieben
+# .alt, .tmp.* und .neu.* mit dem Wortzeichen liegen, und die Meldung sagte
+# "geloescht" (Pruefer installer, Befund 4).
+CP="$BASE/config/plugins/$PFOLDER"
+DP="$BASE/data/plugins/$PFOLDER"
+for F in "$CP.backup.json"* "$CP.kaputt.json"* "$DP.upgrade_laeuft" "$DP.stand.json"*; do
+    if [ -e "$F" ] || [ -L "$F" ]; then
+        rm -f "$F" 2>/dev/null
+    fi
+done
+rm -rf "${DP:?}" 2>/dev/null
+
+# Nachzaehlen: <OK> erst, wenn nichts mehr daliegt (Regeln/06).
+REST=""
+for F in "$CP.backup.json"* "$CP.kaputt.json"* "$DP.upgrade_laeuft" "$DP.stand.json"* "$DP"; do
+    if [ -e "$F" ] || [ -L "$F" ]; then
+        REST="$REST $F"
+    fi
+done
+if [ -z "$REST" ]; then
+    echo "<OK> Ecowitt-Weiche entfernt. Neben dem Plugin-Ordner liegt nichts mehr (Zweitschrift mit dem Wortzeichen, .alt, Marke, Wechselzaehler)."
 else
-    echo "<OK> Ecowitt-Weiche entfernt. Es lag keine Sicherung neben dem Plugin-Ordner."
+    echo "<WARNING> Ecowitt-Weiche entfernt, aber diese Dateien liessen sich nicht loeschen:$REST"
+    echo "<WARNING> Sie koennen das Wortzeichen enthalten - bitte von Hand entfernen."
 fi
 echo "<INFO> Der virtuelle HTTP-Eingang in der Loxone-Projektdatei bleibt bestehen."
 echo "<INFO> Dort muss die Adresse wieder auf die Station selbst zeigen, sonst"

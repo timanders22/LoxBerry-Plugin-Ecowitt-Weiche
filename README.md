@@ -1,6 +1,6 @@
 # LoxBerry-Plugin „Ecowitt-Weiche"
 
-Version 0.9.14
+Version 0.9.15
 
 Holt die Messwerte einer Ecowitt-Wetterstation über **zwei** Netzwerkschnittstellen
 und reicht die Antwort derjenigen durch, die gerade trägt. In der Loxone-Projektdatei
@@ -48,7 +48,7 @@ und liefert das JSON der Station unverändert, ergänzt um zwei Felder ganz vorn
 | Feld | Bedeutung |
 | --- | --- |
 | `ew_quelle` | `primaer` oder `ersatz` — welche Schnittstelle getragen hat |
-| `ew_ok` | 1, solange Daten kommen |
+| `ew_ok` | 1, wenn Daten kommen. **Kein Ausfallmerker:** fallen beide Seiten aus, kommt 503 ohne Daten, und Loxone behält die alte 1. Den Ausfall zeigt der Onlinestatus des Behälters bzw. `OK` der Zustandszeile. |
 
 Daneben beantwortet `live.php?status=1` in **einer Textzeile** den Zustand der
 Weiche selbst:
@@ -59,7 +59,7 @@ Weiche selbst:
 | --- | --- |
 | `OK` | 1 = eine Schnittstelle liefert brauchbare Daten |
 | `QUELLE` | 0 = keine, 1 = primär, 2 = Ersatz |
-| `WECHSEL` | wie oft seit dem Start umgeschaltet wurde |
+| `WECHSEL` | wie oft seit der Installation umgeschaltet wurde (übersteht ein Update) |
 | `ALTER` | Sekunden seit den letzten brauchbaren Daten, −1 = noch nie |
 
 Diese Zeile gehört als eigener virtueller Eingang ins Haus. Sonst arbeitet die
@@ -91,14 +91,18 @@ Fehler soll das Plugin beenden — nicht sie eine Ebene höher wiederholen.
    heißen: die Station antwortet, hat aber den Funk zum Außensensor verloren.
 3. **Reiter Einbindung in Loxone:** die angezeigte Adresse in den **Behälter** des
    virtuellen HTTP-Eingangs übernehmen — den Behälter, nicht die einzelnen
-   Befehle. Die Abfragezeit bleibt, wie sie war.
+   Befehle. Die Abfragezeit bleibt, wie sie war. **Den Timeout des Behälters
+   auf mindestens die Gesamtfrist plus eine Sekunde stellen** — bei der
+   Vorgabe von 4 s Wartezeit also 9000 ms. Der Reiter *Einbindung in Loxone*
+   nennt den Wert für die eingestellte Wartezeit.
 
 ## Das Protokoll
 
 Aufgeschrieben wird nur der **Wechsel** von einer Schnittstelle zur anderen,
 mitsamt dem Grund, aus dem die verlassene Seite verworfen wurde. Nicht jeder
 Abruf: eine Minutenabfrage erzeugte sonst 1440 Zeilen am Tag, in denen die eine
-wichtige untergeht. Ein leeres Protokoll heißt, dass es noch keinen Wechsel gab.
+wichtige untergeht. Ein leeres Protokoll heißt **nicht**, dass es keinen Wechsel
+gab: LoxBerry räumt Protokolle auf. Maßgeblich ist der Zähler `WECHSEL`.
 
 ## Was das Plugin nicht heilt
 
@@ -220,6 +224,60 @@ nach dem Zurückspielen mindestens eine Adresse in der Konfiguration, meldet
 `postinstall.sh` „Einstellungen übernommen"; sonst erscheinen die nächsten
 Schritte wie bisher. In WSL nachgestellt (`Pruefung-Ecowitt-Weiche-0.9.14/`),
 nicht am Gerät.
+
+## Fassung 0.9.15 — Durchgang mit vier Prüfern
+
+Durchgang vom 30.09.2026 mit vier Prüfern (Code, Oberfläche, Installer, Weg zu
+Loxone). Gemessen an einer Stationsattrappe, unter PHP 7.4 und 8.5, mit und ohne
+php-curl; eine echte Station war nicht angeschlossen. Befunde mit Datei:Zeile:
+`Pruefung-Durchgang-2026-09-29/Ecowitt-Weiche_BEFUNDE_UND_VERBESSERUNGEN.md`.
+
+**Bitte in Loxone Config nachziehen:** den Timeout beider Behälter auf
+mindestens 9000 ms stellen (bei 4 s Wartezeit). Mit 4000 ms gibt Loxone auf,
+bevor die Weiche auf die Ersatzseite umgeschaltet hat.
+
+**Umschalten**
+
+* Hängt die primäre Schnittstelle, fragt die Weiche zehn Minuten lang zuerst die
+  Ersatzseite und prüft danach die primäre einmal nach. Bisher kostete jeder
+  Abruf die volle Wartezeit, bevor die Ersatzseite dran kam.
+* Beide Seiten zusammen haben eine Gesamtfrist: zweimal die Wartezeit,
+  höchstens 10 s. Bisher waren bis zu 60 s möglich; ohne curl hielt eine
+  tropfende Station den Abruf 25 s statt 4 s.
+* Eine Umleitung wird auf keinem Weg mehr verfolgt. Ohne curl lieferte die
+  Weiche bisher die Daten eines fremden Rechners aus, wenn die Station auf ihn
+  umleitete. Antworten mit 3xx, 4xx oder 5xx, HTML statt JSON und Antworten über
+  1 MB gelten als Fehlschlag und schalten um — auch mit abgeschalteter
+  Inhaltsprüfung.
+
+**Token und Sicherung**
+
+* Eine Sicherung mit dem Token als Liste machte das Token wirkungslos: danach
+  öffnete `token=Array` den Endpunkt. Beim Zurückspielen wird jetzt jeder Wert
+  wie beim Speichern geprüft; „übernommen“ steht erst da, wenn Datei und
+  Zweitschrift den neuen Stand wirklich tragen.
+* Der Endpunkt legt ohne Einrichtung nichts mehr an. Bis die Oberfläche einmal
+  geöffnet wurde, antwortet er mit 503 „nicht eingerichtet“.
+
+**Oberfläche**
+
+* Nach jedem Absenden leitet die Seite um; ein Neuladen würfelt kein neues
+  Wortzeichen mehr.
+* Ungültige Eingaben werden abgewiesen und benannt, nicht mehr still
+  zurechtgebogen (leere Wartezeit ergab bisher 1 s).
+* Der Abruftest nennt den Grund: keine Verbindung, Zeitüberschreitung,
+  HTTP-Status, HTML statt JSON oder Platzhalter.
+* Der Reiter *Test* ruft den Endpunkt wirklich auf, zählt den Formularschutz und
+  sagt, ob die Konfiguration heil ist.
+
+**Installation**
+
+* Eine Neuinstallation spielt keine Einstellungen einer früheren Installation
+  mehr ein; sie liegen danach als `.alt` daneben (neu: `preinstall.sh`).
+* Der Wechselzähler übersteht ein Update, wie es die Meldung schon immer
+  versprach.
+* Eine abgeschnittene Konfiguration geht vor dem Update als `.kaputt` beiseite,
+  statt verloren zu gehen. Die Deinstallation räumt alle Reste ab.
 
 ## Lizenz
 

@@ -148,6 +148,20 @@ define('EW_GESAMTFRIST', 10);
    sie wieder, ist sie wieder die erste. */
 define('EW_ERSATZ_ZUERST', 600);
 
+/* a1 (Verbesserungsbau 01.10.2026): ALTER aus dem Zeitstempel der Station.
+   Eine Station, deren Bild einfriert, antwortet weiter mit gueltigem JSON
+   und brauchbarer Aussenfeuchte - die Weiche haelt die Daten fuer frisch.
+   Traegt die Antwort einen eigenen Zeitstempel, zaehlt er fuer ALTER.
+   Liegt er mehr als EW_ZUKUNFT_TOLERANZ Sekunden in der Zukunft
+   (Uhrsprung), gilt er als keine Aussage (wie Pumpenwacht 1.0.5). Vor
+   EW_STATIONSZEIT_AB (2020-01-01) ist die Uhr der Station nicht gestellt.
+   NICHT GEMESSEN: ob die GW3000A in get_livedata_info einen Zeitstempel
+   fuehrt - es liegt keine echte Antwort vor; die Pruefstaende bilden sie
+   nach und kennen nur "timestamp" im Block lightning (Zeit des letzten
+   Blitzes), der hier ausdruecklich NICHT zaehlt. */
+define('EW_ZUKUNFT_TOLERANZ', 5);
+define('EW_STATIONSZEIT_AB', 1577836800);
+
 /** Gesamtfrist eines Endpunktaufrufs in Sekunden: zweimal die Wartezeit je
  *  Adresse, hoechstens EW_GESAMTFRIST. */
 function ew_gesamtfrist(array $c)
@@ -161,6 +175,160 @@ function ew_gesamtfrist(array $c)
 function ew_behaelter_timeout_ms(array $c)
 {
     return (ew_gesamtfrist($c) + 1) * 1000;
+}
+
+/* ------------------------------------------------------------------
+ * b1 (Verbesserungsbau 01.10.2026): Timeout der Loxone-Behaelter aus der
+ * Projektdatei - nur, wenn sie dem Plugin vorliegt.
+ *
+ * Anlass: beide Behaelter dieser Anlage ("Wetterstation Ecowitt" VHI2 und
+ * "Ecowitt-Weiche Zustand" VHI28) trugen 4000 ms; noetig sind bei der
+ * Vorgabe 9000 ms (Befunde 30.09.2026, "Zu tun in Loxone Config").
+ *
+ * WARUM KEIN UPLOAD: am Geraet gilt upload_max_filesize = 2M, eine
+ * .Loxone-Datei dieser Anlage hat 3-4 MB, und das Plugin kann die Grenze
+ * nicht anheben (Regeln/04). Die Datei wird deshalb in den
+ * Konfigurationsordner des Plugins GELEGT (Windows-Freigabe, WinSCP, scp).
+ * Gesucht wird nur dort - ein fester Ort, kein Pfad aus dem Formular.
+ * ------------------------------------------------------------------ */
+
+/* Groessere Dateien werden nicht gelesen (Speicher des Webservers). */
+define('EW_PROJEKT_MAX', 33554432);
+
+/** Der Ordner, in dem eine abgelegte Projektdatei gesucht wird. */
+function ew_projekt_ordner()
+{
+    return ew_paths()['config'];
+}
+
+/** Die juengste *.Loxone-Datei im Projektordner als array(pfad, name, zeit,
+ *  groesse), sonst null. Punktdateien und Verknuepfungen zaehlen nicht. */
+function ew_projekt_datei()
+{
+    $o = ew_projekt_ordner();
+    if ($o === '' || !is_dir($o) || !is_readable($o)) {
+        return null;
+    }
+    $liste = @scandir($o);
+    if (!is_array($liste)) {
+        return null;
+    }
+    $beste = null;
+    foreach ($liste as $n) {
+        if ($n === '' || $n[0] === '.' || !preg_match('/\.loxone\z/i', $n)) {
+            continue;
+        }
+        $f = $o . '/' . $n;
+        clearstatcache(true, $f);
+        if (is_link($f) || !is_file($f) || !is_readable($f)) {
+            continue;
+        }
+        $z = (int) @filemtime($f);
+        if ($beste === null || $z > $beste['zeit']
+            || ($z === $beste['zeit'] && strcmp($n, $beste['name']) < 0)) {
+            $beste = array('pfad' => $f, 'name' => $n, 'zeit' => $z, 'groesse' => (int) @filesize($f));
+        }
+    }
+    return $beste;
+}
+
+/**
+ * Die HTTP-Behaelter (Type="VirtualHttpIn") einer Projektdatei, deren
+ * Adresse auf /plugins/<ordner>/live.php zeigt.
+ * Rueckgabe: Liste von array(titel, timeout = Millisekunden oder null,
+ * status = true fuer den Zustandsbehaelter ?status=1).
+ *
+ * Die ADRESSE verlaesst diese Funktion nie: sie traegt das Wortzeichen.
+ * Ein regulaerer Ausdruck statt eines XML-Lesers: .Loxone-Dateien tragen
+ * doppelte Attribute, an denen ein strenger Leser abbricht (gemessen an der
+ * Projektdatei dieser Anlage). Ein Attributwert enthaelt nie ein rohes "<".
+ */
+function ew_projekt_behaelter($roh, $ordner)
+{
+    $aus = array();
+    if (!is_string($roh) || !is_string($ordner) || $ordner === '') {
+        return $aus;
+    }
+    $ziel = '/plugins/' . $ordner . '/live.php';
+    $n = preg_match_all('/<C\s(?=[^<]*?\bType="VirtualHttpIn")((?:\s*[A-Za-z_][A-Za-z0-9_.\-]*="[^"]*")+)\s*\/?>/',
+        $roh, $mm);
+    if (!$n) {
+        return $aus;
+    }
+    foreach ($mm[1] as $teil) {
+        preg_match_all('/([A-Za-z_][A-Za-z0-9_.\-]*)="([^"]*)"/', $teil, $aa, PREG_SET_ORDER);
+        $a = array();
+        foreach ($aa as $x) {
+            /* Doppelte Attribute: das erste gilt. */
+            if (!array_key_exists($x[1], $a)) {
+                $a[$x[1]] = html_entity_decode($x[2], ENT_QUOTES | ENT_XML1, 'UTF-8');
+            }
+        }
+        if (!isset($a['Type']) || $a['Type'] !== 'VirtualHttpIn') {
+            continue;
+        }
+        $adr = isset($a['Address']) ? $a['Address'] : '';
+        if (strpos($adr, $ziel) === false) {
+            continue;
+        }
+        $to = (isset($a['Timeout']) && preg_match('/^[0-9]{1,7}\z/', $a['Timeout'])) ? (int) $a['Timeout'] : null;
+        $aus[] = array(
+            'titel'   => isset($a['Title']) ? ew_kurz($a['Title'], 80) : '',
+            'timeout' => $to,
+            'status'  => preg_match('/[?&]status=1(&|\z)/', $adr) === 1,
+        );
+    }
+    return $aus;
+}
+
+/**
+ * Die abgelegte Projektdatei pruefen. Rueckgabe array(lage, art, datei,
+ * zeit, mindest, behaelter[]) - lage ok|fehl|hinweis, art keine|gross|
+ * unlesbar|ohne|geprueft; je Behaelter zusaetzlich urteil ok|fehl|hinweis.
+ */
+function ew_projekt_pruefen(array $c)
+{
+    $e = array('lage' => 'hinweis', 'art' => 'keine', 'datei' => '', 'zeit' => 0,
+               'mindest' => ew_behaelter_timeout_ms($c), 'behaelter' => array());
+    $d = ew_projekt_datei();
+    if ($d === null) {
+        return $e;
+    }
+    $e['datei'] = $d['name'];
+    $e['zeit'] = $d['zeit'];
+    if ($d['groesse'] > EW_PROJEKT_MAX) {
+        $e['art'] = 'gross';
+        return $e;
+    }
+    $roh = @file_get_contents($d['pfad'], false, null, 0, EW_PROJEKT_MAX);
+    if (!is_string($roh) || $roh === '') {
+        $e['art'] = 'unlesbar';
+        return $e;
+    }
+    $b = ew_projekt_behaelter($roh, ew_paths()['plugin']);
+    unset($roh);
+    if (!$b) {
+        $e['art'] = 'ohne';
+        return $e;
+    }
+    $lage = 'ok';
+    foreach ($b as $i => $x) {
+        if ($x['timeout'] === null) {
+            $b[$i]['urteil'] = 'hinweis';
+            if ($lage === 'ok') {
+                $lage = 'hinweis';
+            }
+        } elseif ($x['timeout'] < $e['mindest']) {
+            $b[$i]['urteil'] = 'fehl';
+            $lage = 'fehl';
+        } else {
+            $b[$i]['urteil'] = 'ok';
+        }
+    }
+    $e['lage'] = $lage;
+    $e['art'] = 'geprueft';
+    $e['behaelter'] = $b;
+    return $e;
 }
 
 /* ------------------------------------------------------------------
@@ -868,12 +1036,14 @@ function ew_ersatz_zuerst(array $stand)
  *   grund   warum die jeweilige Seite verworfen wurde (fuer das Protokoll)
  *   primaer_verworfen  Zeitpunkt, wenn die primaere Seite gefragt und
  *           verworfen wurde, sonst 0
+ *   stationszeit  Zeitstempel der Station aus der brauchbaren Antwort
+ *           (ew_stationszeit), 0 = keiner (a1)
  */
 function ew_weiche(array $c, array $stand = array())
 {
     $aus = array('ok' => false, 'quelle' => '', 'adresse' => '', 'roh' => '',
                  'grund' => array(), 'ts' => time(), 'ersatz_zuerst' => false,
-                 'primaer_verworfen' => 0);
+                 'primaer_verworfen' => 0, 'stationszeit' => 0);
     $bis = microtime(true) + ew_gesamtfrist($c);
     $reihe = array('primaer', 'ersatz');
     if (ew_ersatz_zuerst($stand)) {
@@ -907,6 +1077,7 @@ function ew_weiche(array $c, array $stand = array())
         $aus['quelle'] = $seite;
         $aus['adresse'] = $adr;
         $aus['roh'] = $roh;
+        $aus['stationszeit'] = ew_stationszeit($roh);
         return $aus;
     }
     return $aus;
@@ -955,9 +1126,13 @@ function ew_stand_schreiben(array $w)
         'wechsel' => isset($alt['wechsel']) ? (int) $alt['wechsel'] : 0,
         'letzte_gute' => isset($alt['letzte_gute']) ? (int) $alt['letzte_gute'] : 0,
         'primaer_verworfen' => isset($alt['primaer_verworfen']) ? (int) $alt['primaer_verworfen'] : 0,
+        'stationszeit' => isset($alt['stationszeit']) ? (int) $alt['stationszeit'] : 0,
     );
     if ($w['ok']) {
         $neu['letzte_gute'] = $w['ts'];
+        /* a1: der Zeitstempel gehoert zur letzten brauchbaren Antwort; traegt
+           sie keinen, gilt wieder das Alter der Weiche. */
+        $neu['stationszeit'] = isset($w['stationszeit']) ? (int) $w['stationszeit'] : 0;
     }
     if ($w['quelle'] === 'primaer') {
         $neu['primaer_verworfen'] = 0;
@@ -982,6 +1157,64 @@ function ew_stand_schreiben(array $w)
         fclose($sperre);
     }
     return $neu;
+}
+
+/**
+ * a1: Der Zeitstempel einer Stationsantwort in Unix-Sekunden, 0 = keiner.
+ *
+ * Gelesen wird NUR die oberste Ebene des JSON:
+ *   dateutc    "JJJJ-MM-TT hh:mm:ss" (auch mit T oder + als Trenner), UTC -
+ *              die Form des Ecowitt-Uploadprotokolls
+ *   timestamp  Unix-Sekunden, Zahl oder Ziffernfolge (9-10 Stellen)
+ *   time       ebenso
+ * Der erste vorhandene Schluessel entscheidet; ist sein Wert unbrauchbar
+ * ("now", "--", vor 2020), gilt: keiner. Ein "timestamp" in einem Block
+ * darunter (lightning: letzter Blitz) ist kein Zeitpunkt der Messung.
+ */
+function ew_stationszeit($roh)
+{
+    $d = is_string($roh) ? json_decode($roh, true) : null;
+    if (!is_array($d)) {
+        return 0;
+    }
+    foreach (array('dateutc', 'timestamp', 'time') as $k) {
+        if (!array_key_exists($k, $d)) {
+            continue;
+        }
+        $v = $d[$k];
+        $ts = 0;
+        if ($k === 'dateutc') {
+            if (is_string($v) && preg_match('/^([0-9]{4})-([0-9]{2})-([0-9]{2})[ T+]([0-9]{2}):([0-9]{2}):([0-9]{2})\z/', $v, $m)
+                && checkdate((int) $m[2], (int) $m[3], (int) $m[1])
+                && (int) $m[4] < 24 && (int) $m[5] < 60 && (int) $m[6] < 60) {
+                $ts = gmmktime((int) $m[4], (int) $m[5], (int) $m[6], (int) $m[2], (int) $m[3], (int) $m[1]);
+            }
+        } elseif (is_int($v) || (is_string($v) && preg_match('/^[0-9]{9,10}\z/', $v))) {
+            $ts = (int) $v;
+        }
+        return ($ts >= EW_STATIONSZEIT_AB) ? (int) $ts : 0;
+    }
+    return 0;
+}
+
+/**
+ * a1: ALTER fuer live.php?status=1. -1 = noch nie brauchbare Daten; sonst
+ * die Sekunden seit der letzten brauchbaren Antwort - und, wenn diese einen
+ * Zeitstempel der Station trug, mindestens die Sekunden seit diesem.
+ * Ein Zeitstempel mehr als EW_ZUKUNFT_TOLERANZ s in der Zukunft zaehlt nicht.
+ */
+function ew_alter(array $stand, $jetzt = null)
+{
+    $jetzt = ($jetzt === null) ? time() : (int) $jetzt;
+    if (empty($stand['letzte_gute'])) {
+        return -1;
+    }
+    $alter = $jetzt - (int) $stand['letzte_gute'];
+    $sz = isset($stand['stationszeit']) ? (int) $stand['stationszeit'] : 0;
+    if ($sz > 0 && $sz <= $jetzt + EW_ZUKUNFT_TOLERANZ) {
+        $alter = max($alter, $jetzt - $sz);
+    }
+    return $alter;
 }
 
 function ew_stand_lesen()
@@ -1029,9 +1262,15 @@ function ew_stand_lesen()
  *
  * Rueckgabe: array(Konfiguration|null, Beanstandungen[], uebernommene Werte,
  * Hinweise[]).
+ *
+ * X-3 (Verbesserungsbau 01.10.2026): $namen sammelt die NAMEN der
+ * beanstandeten Schluessel (nie ihre Werte) fuer die Warnung beim Sichern.
+ * Schluessel, die mit "_" beginnen, sind Kopfzeilen (etwa "_warnung" der
+ * eigenen Sicherung) und werden uebergangen.
  */
-function ew_sicherung_lesen($roh)
+function ew_sicherung_lesen($roh, &$namen = null)
 {
+    $namen = array();
     $mangel = array();
     $hinweise = array();
     $daten = json_decode((string) $roh, true);
@@ -1043,13 +1282,18 @@ function ew_sicherung_lesen($roh)
     $anzahl = 0;
     foreach ($daten as $k => $w) {
         $k = (string) $k;
+        if ($k !== '' && $k[0] === '_') {
+            continue;
+        }
         if (!in_array($k, $bekannt, true)) {
             $mangel[] = sprintf(ew_t('TEXT.SICH_FREMD'), ew_kurz($k, 60));
+            $namen[] = ew_kurz($k, 60);
             continue;
         }
         list($ok, $wert, $grund) = ew_wert_pruefen($k, $w);
         if (!$ok) {
             $mangel[] = $grund;
+            $namen[] = $k;
             continue;
         }
         $neu[$k] = $wert;
@@ -1083,11 +1327,33 @@ function ew_sicherung_lesen($roh)
     }
     if ($fehlend) {
         $mangel[] = sprintf(ew_t('TEXT.SICH_FEHLEND'), count($fehlend), implode(', ', $fehlend));
+        $namen = array_merge($namen, $fehlend);
     }
     if (!$mangel && $neu['token'] === '') {
         $hinweise[] = ew_t('TEXT.SICH_OHNE_TOKEN');
     }
     return array($mangel ? null : $neu, $mangel, $anzahl, $hinweise);
+}
+
+/**
+ * X-3: Welche gespeicherten Werte bestuenden das eigene Zurueckspielen
+ * nicht? Die Sicherung (dieselbe, die "Einstellungen sichern" ausgibt) wird
+ * durch ew_sicherung_lesen() geschickt. Rueckgabe: Liste der NAMEN, nie der
+ * Werte; leer = die Sicherung liesse sich zurueckspielen.
+ */
+function ew_rueckspiel_altwerte(array $sich)
+{
+    $js = json_encode($sich, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    if ($js === false) {
+        /* Nicht kodierbar: das meldet der Knopf selbst (SICH_SCHREIBFEHLER). */
+        return array();
+    }
+    $namen = array();
+    list($neu) = ew_sicherung_lesen($js, $namen);
+    if ($neu !== null) {
+        return array();
+    }
+    return $namen ? array_values(array_unique($namen)) : array('?');
 }
 
 function ew_sprachdatei()
@@ -1290,6 +1556,105 @@ function ew_einmal_lesen()
 }
 
 /* ==================================================================
+ * EINGABEN NACH EINER BEANSTANDUNG (X-2, Verbesserungsbau 01.10.2026)
+ * ==================================================================
+ * Regeln/04 "Nach einer Beanstandung stehen die eingetippten Werte wieder
+ * im Formular". Nur das Einstellungsformular, nur seine Felder, nie das
+ * Wortzeichen (es steht in keiner Liste und reist deshalb nie mit).
+ * ================================================================== */
+
+/** Die Felder des Einstellungsformulars: Text und Haken. */
+function ew_eingabe_felder()
+{
+    return array('text'  => array('primaer', 'ersatz', 'pfad', 'timeout'),
+                 'haken' => array('pruefe_wert'));
+}
+
+/** Die eingetippten Werte aus $_POST fuer die Einmalmeldung, oder null. */
+function ew_eingaben_sammeln(array $beanstandet)
+{
+    if (!$beanstandet) {
+        return null;
+    }
+    $f = ew_eingabe_felder();
+    $werte = array();
+    foreach ($f['text'] as $feld) {
+        if (isset($_POST[$feld]) && is_string($_POST[$feld]) && strlen($_POST[$feld]) <= 256
+            && preg_match('//u', $_POST[$feld]) === 1) {
+            $werte[$feld] = $_POST[$feld];
+        }
+    }
+    foreach ($f['haken'] as $feld) {
+        $werte[$feld] = empty($_POST[$feld]) ? '' : '1';
+    }
+    return array('form' => 'settings', 'werte' => $werte,
+                 'beanstandet' => array_values(array_unique(array_map('strval', $beanstandet))));
+}
+
+/** Die Eingaben aus der Einmalmeldung annehmen (nur bekannte Felder, nur
+ *  Text); ohne Argument: der angenommene Stand. */
+function ew_eingaben_setzen($roh = null)
+{
+    static $ein = array('form' => '', 'werte' => array(), 'beanstandet' => array());
+    if ($roh === null) {
+        return $ein;
+    }
+    if (!is_array($roh) || !isset($roh['form']) || $roh['form'] !== 'settings') {
+        return $ein;
+    }
+    $f = ew_eingabe_felder();
+    $felder = array_merge($f['text'], $f['haken']);
+    $werte = array();
+    if (isset($roh['werte']) && is_array($roh['werte'])) {
+        foreach ($roh['werte'] as $k => $v) {
+            if (in_array((string) $k, $felder, true) && is_string($v)) {
+                $werte[(string) $k] = $v;
+            }
+        }
+    }
+    $bean = array();
+    if (isset($roh['beanstandet']) && is_array($roh['beanstandet'])) {
+        foreach ($roh['beanstandet'] as $b) {
+            if (is_string($b) && in_array($b, array_merge($felder, array('token')), true)) {
+                $bean[] = $b;
+            }
+        }
+    }
+    if ($bean) {
+        $ein = array('form' => 'settings', 'werte' => $werte, 'beanstandet' => $bean);
+    }
+    return $ein;
+}
+
+/** Wert eines Textfelds: die Eingabe nach einer Beanstandung, sonst der gespeicherte. */
+function ew_eingabe($feld, $gespeichert)
+{
+    $ein = ew_eingaben_setzen();
+    if ($ein['form'] === 'settings' && array_key_exists($feld, $ein['werte'])) {
+        return $ein['werte'][$feld];
+    }
+    return $gespeichert;
+}
+
+/** Haken: nach einer Beanstandung der abgeschickte Stand, sonst der gespeicherte. */
+function ew_eingabe_an($feld, $gespeichert)
+{
+    $ein = ew_eingaben_setzen();
+    if ($ein['form'] === 'settings' && array_key_exists($feld, $ein['werte'])) {
+        return $ein['werte'][$feld] === '1';
+    }
+    return !empty($gespeichert);
+}
+
+/** Das beanstandete Feld wird rot umrandet (Klasse sm-beanstandet). */
+function ew_markierung($feld)
+{
+    $ein = ew_eingaben_setzen();
+    return in_array($feld, $ein['beanstandet'], true)
+        ? ' class="sm-beanstandet" aria-invalid="true"' : '';
+}
+
+/* ==================================================================
  * PRUEFZEILEN DES REITERS TEST (O5)
  * ==================================================================
  * Jede Funktion liefert array(lage, text); lage ist 'ok', 'fehl' oder
@@ -1336,6 +1701,43 @@ function ew_pruef_endpunkt($token)
         return array('fehl', sprintf(ew_t('TEST.EP_FALSCH'), $info['code'], ew_kurz($info['rumpf'], 80)));
     }
     return array('hinweis', sprintf(ew_t('TEST.EP_KEINE'), ew_abruf_text($info)));
+}
+
+/** b1: Pruefzeile "Timeout der Loxone-Behaelter" aus ew_projekt_pruefen().
+ *  Ohne abgelegte Projektdatei: nicht feststellbar, mit dem Mindestwert. */
+function ew_pruef_behaelter(array $e)
+{
+    $ordner = ew_projekt_ordner();
+    switch ($e['art']) {
+    case 'keine':
+        return array('hinweis', sprintf(ew_t('TEST.PROJ_KEINE'), (int) $e['mindest'], $ordner));
+    case 'gross':
+        return array('hinweis', sprintf(ew_t('TEST.PROJ_GROSS'), $e['datei'], EW_PROJEKT_MAX));
+    case 'unlesbar':
+        return array('hinweis', sprintf(ew_t('TEST.PROJ_UNLESBAR'), $e['datei']));
+    case 'ohne':
+        return array('hinweis', sprintf(ew_t('TEST.PROJ_OHNE'), $e['datei'],
+            '/plugins/' . ew_paths()['plugin'] . '/live.php', (int) $e['mindest']));
+    }
+    $zu = array();
+    $ohne = array();
+    foreach ($e['behaelter'] as $x) {
+        if ($x['urteil'] === 'fehl') {
+            $zu[] = $x['titel'] . ' ' . (int) $x['timeout'] . ' ms';
+        } elseif ($x['urteil'] === 'hinweis') {
+            $ohne[] = $x['titel'];
+        }
+    }
+    $n = count($e['behaelter']);
+    if ($zu) {
+        return array('fehl', sprintf(ew_t('TEST.PROJ_FEHL'), count($zu), $n, (int) $e['mindest'],
+            implode('; ', $zu), $e['datei']));
+    }
+    if ($ohne) {
+        return array('hinweis', sprintf(ew_t('TEST.PROJ_OHNE_TIMEOUT'), implode('; ', $ohne),
+            (int) $e['mindest'], $e['datei']));
+    }
+    return array('ok', sprintf(ew_t('TEST.PROJ_OK'), $n, (int) $e['mindest'], $e['datei']));
 }
 
 /** Tragen alle POST-Formulare der Oberflaeche das Formularmerkmal? Gezaehlt

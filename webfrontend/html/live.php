@@ -84,7 +84,9 @@ $ew_stand = ew_stand_schreiben($ew_w);
 if (isset($_GET['status'])) {
     header('Content-Type: text/plain; charset=utf-8');
     $q = ($ew_w['quelle'] === 'primaer') ? 1 : (($ew_w['quelle'] === 'ersatz') ? 2 : 0);
-    $alter = empty($ew_stand['letzte_gute']) ? -1 : (time() - (int) $ew_stand['letzte_gute']);
+    /* a1: traegt die letzte brauchbare Antwort einen Zeitstempel der
+       Station, zaehlt er (ew_alter); das Format der Zeile bleibt. */
+    $alter = ew_alter($ew_stand);
     printf("WEICHE;OK=%d;QUELLE=%d;WECHSEL=%d;ALTER=%d\n",
         $ew_w['ok'] ? 1 : 0, $q, (int) $ew_stand['wechsel'], $alter);
     exit;

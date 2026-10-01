@@ -111,6 +111,7 @@ $ew_meldung = '';
 $ew_hinweise = array();
 $ew_fehler = array();
 $ew_probe = null;
+$ew_eingaben = null;
 $ew_post = isset($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'POST';
 
 /* Das Ergebnis der vorigen Anfrage (Einmalmeldung, O1) - NUR beim GET
@@ -131,6 +132,10 @@ if (!$ew_post) {
         }
         if (isset($ew_einmal['probe']) && is_array($ew_einmal['probe'])) {
             $ew_probe = $ew_einmal['probe'];
+        }
+        /* X-2: die eingetippten Werte nach einer Beanstandung. */
+        if (isset($ew_einmal['eingaben'])) {
+            ew_eingaben_setzen($ew_einmal['eingaben']);
         }
     }
 }
@@ -171,11 +176,13 @@ function ew_feld($name)
 if ($ew_post && isset($_POST['speichern'])) {
     $ew_neu = $ew_cfg;
     $ew_mangel = array();
+    $ew_falsch = array();
     $ew_vg = ew_vorgaben();
     foreach (array('primaer' => 'TEXT.L_PRIMAER', 'ersatz' => 'TEXT.L_ERSATZ') as $ew_s => $ew_l) {
         $ew_roh = ew_feld($ew_s);
         if ($ew_roh !== '' && ew_adresse_pruefen($ew_roh) === '') {
             $ew_mangel[] = sprintf(ew_t('TEXT.ADRESSE_FELD_UNGUELTIG'), ew_t($ew_l), ew_kurz($ew_roh, 60));
+            $ew_falsch[] = $ew_s;
         } else {
             $ew_neu[$ew_s] = $ew_roh;
         }
@@ -186,6 +193,7 @@ if ($ew_post && isset($_POST['speichern'])) {
         $ew_hinweise[] = ew_t('TEXT.PFAD_VORGABE');
     } elseif (!ew_pfad_taugt($ew_roh)) {
         $ew_mangel[] = sprintf(ew_t('TEXT.PFAD_UNGUELTIG'), ew_kurz($ew_roh, 60));
+        $ew_falsch[] = 'pfad';
     } else {
         $ew_neu['pfad'] = $ew_roh;
     }
@@ -195,6 +203,7 @@ if ($ew_post && isset($_POST['speichern'])) {
         $ew_hinweise[] = ew_t('TEXT.TIMEOUT_VORGABE');
     } elseif (ew_timeout_wert($ew_roh) === null) {
         $ew_mangel[] = sprintf(ew_t('TEXT.TIMEOUT_UNGUELTIG'), ew_kurz($ew_roh, 20));
+        $ew_falsch[] = 'timeout';
     } else {
         $ew_neu['timeout'] = ew_timeout_wert($ew_roh);
     }
@@ -209,6 +218,7 @@ if ($ew_post && isset($_POST['speichern'])) {
     if ($ew_roh !== '') {
         if (!ew_token_taugt($ew_roh)) {
             $ew_mangel[] = sprintf(ew_t('TEXT.TOKEN_UNGUELTIG'), strlen($ew_roh));
+            $ew_falsch[] = 'token';
         } else {
             $ew_neu['token'] = $ew_roh;
         }
@@ -216,6 +226,11 @@ if ($ew_post && isset($_POST['speichern'])) {
     if ($ew_mangel) {
         $ew_hinweise = array();
         $ew_fehler[] = array('kopf' => ew_t('TEXT.NICHT_GESPEICHERT'), 'punkte' => $ew_mangel);
+        /* X-2: die eingetippten Werte reisen mit (nie das Wortzeichen). */
+        $ew_eingaben = ew_eingaben_sammeln($ew_falsch);
+        if ($ew_eingaben !== null) {
+            $ew_hinweise[] = ew_t('TEXT.EINGABEN_ZURUECK');
+        }
     } elseif (ew_config_speichern($ew_neu)) {
         /* Gemeldet wird, was geschah: bis 0.9.12 stand hier "gespeichert"
            auch dann, wenn die Datei nicht geschrieben war (Fall O1). */
@@ -294,7 +309,15 @@ if ($ew_post && isset($_POST['pruefen'])) {
  * traegt sie ein Geheimnis, und der Hinweis am Knopf sagt das.
  * Der Download ist die eine Antwort ohne Umleitung (Regeln/04). */
 if ($ew_post && isset($_POST['ew_sichern'])) {
-    $ew_js = json_encode(ew_config(),
+    /* X-3 (Verbesserungsbau 01.10.2026): bestuende ein gespeicherter Wert das
+       eigene Zurueckspielen nicht, sagt es der Kopf der Datei - mit den
+       NAMEN, nie den Werten. Geliefert wird trotzdem, vollstaendig. */
+    $ew_sich = ew_config();
+    $ew_altw = ew_rueckspiel_altwerte($ew_sich);
+    if ($ew_altw) {
+        $ew_sich = array('_warnung' => sprintf(ew_t('TEXT.SICH_ALTWERT_KOPF'), implode(', ', $ew_altw))) + $ew_sich;
+    }
+    $ew_js = json_encode($ew_sich,
         JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     if ($ew_js !== false) {
         header('Content-Type: application/json; charset=utf-8');
@@ -367,6 +390,9 @@ if ($ew_post && isset($_POST['ew_zurueck'])) {
 if ($ew_post) {
     $ew_m = array('meldung' => $ew_meldung, 'hinweise' => $ew_hinweise,
                   'fehler' => $ew_fehler, 'probe' => $ew_probe);
+    if ($ew_eingaben !== null) {
+        $ew_m['eingaben'] = $ew_eingaben;
+    }
     if (ew_einmal_schreiben($ew_m)) {
         header('Location: index.php?form=' . rawurlencode(substr($ew_tab, 4)), true, 303);
         exit;
@@ -375,6 +401,10 @@ if ($ew_post) {
 }
 
 $ew_stand = ew_stand_lesen();
+/* b1: die abgelegte Projektdatei nur lesen, wenn einer der beiden Reiter
+   offen ist, die sie zeigen - umgeschaltet wird ueber den Server, ein
+   geschlossener Reiter wird nie angesehen. */
+$ew_proj = ($ew_tab === 'tab-loxone' || $ew_tab === 'tab-test') ? ew_projekt_pruefen($ew_cfg) : null;
 $ew_host = isset($_SERVER['HTTP_HOST']) && $_SERVER['HTTP_HOST'] !== '' ? $_SERVER['HTTP_HOST'] : 'loxberry';
 $ew_plugin = ew_paths()['plugin'];
 $ew_tokenteil = $ew_cfg['token'] !== '' ? '?token=' . rawurlencode($ew_cfg['token']) : '';
@@ -460,6 +490,9 @@ if ($ew_rahmen) {
 .sm-row { display: flex; gap: 12px; flex-wrap: wrap; }
 .sm-row > div { flex: 1 1 220px; }
 .sm-grau { color: #999; font-style: italic; }
+/* Eigene Zutat (X-2, Verbesserungsbau 01.10.2026): das beanstandete Feld
+   nach einer Abweisung, wie Heimkino 1.3.16. */
+.sm-wrap input.sm-beanstandet { border: 2px solid #c62828 !important; background-color: #fff5f5; }
 </style>
 
 <div class="sm-wrap">
@@ -501,37 +534,37 @@ if ($ew_rahmen) {
 
 <div class="sm-feld">
   <label><?php echo ew_t('TEXT.L_PRIMAER'); ?></label>
-  <input data-role="none" type="text" name="primaer" value="<?= ew_e($ew_cfg['primaer']) ?>" placeholder="192.168.178.20">
+  <input data-role="none" type="text" name="primaer" value="<?= ew_e(ew_eingabe('primaer', $ew_cfg['primaer'])) ?>" placeholder="192.168.178.20"<?= ew_markierung('primaer') ?>>
   <p class="sm-hilfe"><?php echo ew_t('TEXT.H_PRIMAER'); ?></p>
 </div>
 
 <div class="sm-feld">
   <label><?php echo ew_t('TEXT.L_ERSATZ'); ?></label>
-  <input data-role="none" type="text" name="ersatz" value="<?= ew_e($ew_cfg['ersatz']) ?>" placeholder="192.168.178.21">
+  <input data-role="none" type="text" name="ersatz" value="<?= ew_e(ew_eingabe('ersatz', $ew_cfg['ersatz'])) ?>" placeholder="192.168.178.21"<?= ew_markierung('ersatz') ?>>
   <p class="sm-hilfe"><?php echo ew_t('TEXT.H_ERSATZ'); ?></p>
 </div>
 
 <div class="sm-feld">
   <label><?php echo ew_t('TEXT.L_PFAD'); ?></label>
-  <input data-role="none" type="text" name="pfad" value="<?= ew_e($ew_cfg['pfad']) ?>">
+  <input data-role="none" type="text" name="pfad" value="<?= ew_e(ew_eingabe('pfad', $ew_cfg['pfad'])) ?>"<?= ew_markierung('pfad') ?>>
   <p class="sm-hilfe"><?php echo ew_t('TEXT.H_PFAD'); ?></p>
 </div>
 
 <div class="sm-feld">
   <label><?php echo ew_t('TEXT.L_TIMEOUT'); ?></label>
-  <input data-role="none" type="number" min="1" max="30" name="timeout" value="<?= ew_e($ew_cfg['timeout']) ?>">
+  <input data-role="none" type="number" min="1" max="30" name="timeout" value="<?= ew_e(ew_eingabe('timeout', $ew_cfg['timeout'])) ?>"<?= ew_markierung('timeout') ?>>
   <p class="sm-hilfe"><?php echo ew_t('TEXT.H_TIMEOUT'); ?></p>
 </div>
 
 <div class="sm-feld">
-  <label><input data-role="none" type="checkbox" name="pruefe_wert" value="1"<?= !empty($ew_cfg['pruefe_wert']) ? ' checked' : '' ?>>
+  <label><input data-role="none" type="checkbox" name="pruefe_wert" value="1"<?= ew_eingabe_an('pruefe_wert', $ew_cfg['pruefe_wert']) ? ' checked' : '' ?>>
     <?php echo ew_t('TEXT.L_PRUEFE'); ?></label>
   <p class="sm-hilfe"><?php echo ew_t('TEXT.H_PRUEFE'); ?></p>
 </div>
 
 <div class="sm-feld">
   <label><?php echo ew_t('TEXT.L_TOKEN'); ?></label>
-  <input data-role="none" type="text" name="token" value="<?= ew_e($ew_cfg['token']) ?>">
+  <input data-role="none" type="text" name="token" value="<?= ew_e($ew_cfg['token']) ?>"<?= ew_markierung('token') ?>>
   <p class="sm-hilfe"><?php echo ew_t('TEXT.H_TOKEN'); ?></p>
 </div>
 
@@ -549,6 +582,9 @@ if ($ew_rahmen) {
 <h2><?= ew_t('TEXT.H_SICHERUNG') ?></h2>
 <div class="sm-hinweis"><?= ew_t('TEXT.SICH_ERKLAERUNG') ?></div>
 <div class="sm-warnung"><?= ew_t('TEXT.SICH_WARNUNG') ?></div>
+<?php $ew_altwerte = ew_rueckspiel_altwerte($ew_cfg); if ($ew_altwerte) { ?>
+<div class="sm-warnung"><?php printf(ew_t('TEXT.SICH_ALTWERT'), ew_e(implode(', ', $ew_altwerte))); ?></div>
+<?php } ?>
 <div class="sm-knopfreihe">
   <!-- ZWEI GETRENNTE Formulare. Das Sichern schickt einen Download und ruft
        exit auf; das Zurueckspielen braucht enctype="multipart/form-data".
@@ -593,6 +629,27 @@ if ($ew_rahmen) {
 <h3><?php echo ew_t('TEXT.LOX_AUSFALL_H'); ?></h3>
 <div class="sm-step"><?php echo ew_t('TEXT.LOX_503'); ?></div>
 <div class="sm-warnung"><?php printf(ew_t('TEXT.LOX_TIMEOUT'), ew_behaelter_timeout_ms($ew_cfg), ew_gesamtfrist($ew_cfg), (int) $ew_cfg['timeout'], EW_GESAMTFRIST); ?></div>
+<?php /* b1: die Behaelter aus der abgelegten Projektdatei. */
+if (is_array($ew_proj)) {
+    $ew_pr = ew_pruef_behaelter($ew_proj);
+    $ew_pk = $ew_pr[0] === 'fehl' ? 'sm-fehler' : ($ew_pr[0] === 'ok' ? 'sm-hinweis' : 'sm-warnung'); ?>
+<h3><?php echo ew_t('TEXT.PROJ_H'); ?></h3>
+<div class="<?= $ew_pk ?>"><?= ew_e($ew_pr[1]) ?></div>
+<?php if ($ew_proj['art'] === 'geprueft') { ?>
+<table class="sm-tbl">
+  <tr><th><?php echo ew_t('TEXT.PROJ_BEHAELTER'); ?></th><th><?php echo ew_t('TEXT.PROJ_ART'); ?></th><th><?php echo ew_t('TEXT.PROJ_TIMEOUT'); ?></th><th><?php echo ew_t('TEXT.ERGEBNIS'); ?></th></tr>
+<?php foreach ($ew_proj['behaelter'] as $ew_b) { ?>
+  <tr><td><?= ew_e($ew_b['titel']) ?></td>
+      <td><?php echo ew_t($ew_b['status'] ? 'TEXT.PROJ_ART_STATUS' : 'TEXT.PROJ_ART_DATEN'); ?></td>
+      <td class="sm-mono"><?= $ew_b['timeout'] === null ? '—' : (int) $ew_b['timeout'] . ' ms' ?></td>
+      <td><?= $ew_b['urteil'] === 'ok' ? '<span class="sm-an">' . ew_e(ew_t('TEXT.S_OK')) . '</span>'
+            : ($ew_b['urteil'] === 'fehl' ? '<span class="sm-aus">' . ew_e(sprintf(ew_t('TEXT.PROJ_ZU_KURZ'), (int) $ew_proj['mindest'])) . '</span>'
+                                           : '<span class="sm-grau">' . ew_e(ew_t('TEXT.PROJ_NICHT_ANGEGEBEN')) . '</span>') ?></td></tr>
+<?php } ?>
+</table>
+<?php } ?>
+<p class="sm-hilfe"><?php printf(ew_t('TEXT.PROJ_HILFE'), '<span class="sm-mono">' . ew_e(ew_projekt_ordner()) . '</span>'); ?></p>
+<?php } ?>
 <div class="sm-hinweis"><?php echo ew_t('TEXT.LOX_EWOK'); ?></div>
 </div>
 
@@ -605,12 +662,15 @@ if ($ew_rahmen) {
        bis 0.9.14 frisch aus (Pruefer oberflaeche, Befund 9). */
     $ew_lg = isset($ew_stand['letzte_gute']) ? (int) $ew_stand['letzte_gute'] : 0;
     $ew_ts = isset($ew_stand['ts']) ? (int) $ew_stand['ts'] : 0;
-    $ew_q = isset($ew_stand['quelle']) ? $ew_stand['quelle'] : ''; ?>
+    $ew_q = isset($ew_stand['quelle']) ? $ew_stand['quelle'] : '';
+    /* a1: der Zeitstempel der Station aus der letzten brauchbaren Antwort. */
+    $ew_sz = isset($ew_stand['stationszeit']) ? (int) $ew_stand['stationszeit'] : 0; ?>
 <div class="sm-kacheln">
   <div class="sm-kachel"><b><?= $ew_q === 'primaer' ? ew_t('TEXT.PRIMAER') : ($ew_q === 'ersatz' ? ew_t('TEXT.ERSATZ') : '—') ?></b><span><?php echo ew_t('TEXT.TRAEGT_GERADE'); ?></span></div>
   <div class="sm-kachel"><b><?= (int) (isset($ew_stand['wechsel']) ? $ew_stand['wechsel'] : 0) ?></b><span><?php echo ew_t('TEXT.WECHSEL_GESAMT'); ?></span></div>
   <div class="sm-kachel"><b><?= $ew_lg > 0 ? ew_e(date('d.m.Y H:i:s', $ew_lg)) : '—' ?></b><span><?php echo ew_t('TEXT.LETZTE_GUTE'); ?><?= $ew_lg > 0 ? ' (' . ew_e(ew_alter_text(time() - $ew_lg)) . ')' : '' ?></span></div>
   <div class="sm-kachel"><b><?= $ew_ts > 0 ? ew_e(date('d.m.Y H:i:s', $ew_ts)) : '—' ?></b><span><?php echo ew_t('TEXT.LETZTER_ABRUF'); ?><?= $ew_ts > 0 ? ' (' . ew_e(ew_alter_text(time() - $ew_ts)) . ')' : '' ?></span></div>
+  <div class="sm-kachel"><b><?= $ew_sz > 0 ? ew_e(date('d.m.Y H:i:s', $ew_sz)) : '—' ?></b><span><?php echo ew_t('TEXT.STATIONSZEIT'); ?><?= $ew_sz > 0 ? ' (' . ew_e(ew_alter_text(time() - $ew_sz)) . ')' : ' (' . ew_e(ew_t('TEXT.STATIONSZEIT_KEINE')) . ')' ?></span></div>
 </div>
 <?php } ?>
 
@@ -700,6 +760,11 @@ $ew_selbst[] = array(
 $ew_r = ($ew_tab === 'tab-test') ? ew_pruef_endpunkt($ew_cfg['token'])
       : array('hinweis', ew_t('TEST.EP_NUR_OFFEN'));
 $ew_selbst[] = array('was' => ew_t('TEXT.S_ANTWORTET'), 'lage' => $ew_r[0], 'wie' => $ew_r[1]);
+
+/* b1: Timeout der Loxone-Behaelter - nur aus einer abgelegten Projektdatei;
+   ohne sie "nicht feststellbar" mit dem noetigen Mindestwert. */
+$ew_r = is_array($ew_proj) ? ew_pruef_behaelter($ew_proj) : array('hinweis', ew_t('TEST.EP_NUR_OFFEN'));
+$ew_selbst[] = array('was' => ew_t('TEXT.S_BEHAELTER'), 'lage' => $ew_r[0], 'wie' => $ew_r[1]);
 
 $ew_cfgdatei = ew_paths()['cfgdatei'];
 $ew_schreib = is_writable(is_file($ew_cfgdatei) ? $ew_cfgdatei : dirname($ew_cfgdatei));

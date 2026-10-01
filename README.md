@@ -1,6 +1,6 @@
 # LoxBerry-Plugin „Ecowitt-Weiche"
 
-Version 0.9.15
+Version 0.9.16
 
 Holt die Messwerte einer Ecowitt-Wetterstation über **zwei** Netzwerkschnittstellen
 und reicht die Antwort derjenigen durch, die gerade trägt. In der Loxone-Projektdatei
@@ -60,7 +60,7 @@ Weiche selbst:
 | `OK` | 1 = eine Schnittstelle liefert brauchbare Daten |
 | `QUELLE` | 0 = keine, 1 = primär, 2 = Ersatz |
 | `WECHSEL` | wie oft seit der Installation umgeschaltet wurde (übersteht ein Update) |
-| `ALTER` | Sekunden seit den letzten brauchbaren Daten, −1 = noch nie |
+| `ALTER` | Sekunden seit den letzten brauchbaren Daten, −1 = noch nie. Trägt die Antwort der Station auf oberster Ebene einen eigenen Zeitstempel (`dateutc`, `timestamp` oder `time`), zählt `ALTER` ab diesem; mehr als 5 s in der Zukunft gilt er als keine Aussage. Ob die GW3000A einen liefert, ist nicht gemessen. |
 
 Diese Zeile gehört als eigener virtueller Eingang ins Haus. Sonst arbeitet die
 Weiche unbemerkt, und dass eine Schnittstelle seit Wochen tot ist, fällt erst
@@ -94,7 +94,13 @@ Fehler soll das Plugin beenden — nicht sie eine Ebene höher wiederholen.
    Befehle. Die Abfragezeit bleibt, wie sie war. **Den Timeout des Behälters
    auf mindestens die Gesamtfrist plus eine Sekunde stellen** — bei der
    Vorgabe von 4 s Wartezeit also 9000 ms. Der Reiter *Einbindung in Loxone*
-   nennt den Wert für die eingestellte Wartezeit.
+   nennt den Wert für die eingestellte Wartezeit. Liegt die `.Loxone`-Datei im
+   Konfigurationsordner des Plugins (`config/plugins/ecowittweiche/`, über die
+   Windows-Freigabe, WinSCP oder `scp`), liest er die Timeouts der Behälter,
+   die auf `live.php` zeigen, selbst aus und meldet jeden zu kurzen — dort und
+   im Reiter *Test*. Ein Hochladen gibt es nicht: PHP nimmt am LoxBerry
+   höchstens 2 MB je Datei an. Die Datei trägt die Adressen samt Wortzeichen;
+   nach der Prüfung wieder entfernen.
 
 ## Das Protokoll
 
@@ -278,6 +284,27 @@ bevor die Weiche auf die Ersatzseite umgeschaltet hat.
   versprach.
 * Eine abgeschnittene Konfiguration geht vor dem Update als `.kaputt` beiseite,
   statt verloren zu gehen. Die Deinstallation räumt alle Reste ab.
+
+## Fassung 0.9.16
+
+Verbesserungen aus dem Durchgang vom 30.09.2026 (Verbesserungsliste
+`Pruefung-Durchgang-2026-09-29/VERBESSERUNGEN_OFFEN.md`). Gemessen an einer
+Stations-Attrappe und an der Projektdatei der Anlage unter PHP 7.4 und 8.5;
+nicht an der Station.
+
+* `ALTER` zählt ab dem Zeitstempel der Station, wenn die Antwort einen trägt
+  (`dateutc`, `timestamp`, `time`); mehr als 5 s in der Zukunft zählt nicht. Ob
+  die GW3000A einen liefert, ist noch offen. Das JSON von `live.php` ist
+  unverändert.
+* **Prüfung der Behälter-Zeitgrenze:** Wer die `.Loxone`-Datei nach
+  `config/plugins/ecowittweiche/` legt, bekommt in den Reitern Einbindung und Test
+  angezeigt, welcher Behälter einen Timeout unter der Gesamtfrist trägt
+  (Mindestwert 9000 ms). Die Datei danach wieder entfernen – sie trägt alle
+  Zugangsdaten der Anlage.
+* Nach einer Beanstandung stehen die eingetippten Werte wieder im Formular, das
+  Feld ist rot umrandet; das Wortzeichen kommt nie zurück. „Einstellungen sichern“
+  warnt gelb (`_warnung`, nur Namen); Kopfzeilen `_…` werden beim Zurückspielen
+  übergangen.
 
 ## Lizenz
 

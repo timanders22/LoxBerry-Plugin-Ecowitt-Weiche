@@ -616,12 +616,15 @@ if ($ew_rahmen) {
 
 <h3><?php echo ew_t('TEXT.LOX_STATUS'); ?></h3>
 <p><span class="sm-mono">http://<?= ew_e($ew_host) ?>/plugins/<?= ew_e($ew_plugin) ?>/live.php?status=1<?= $ew_cfg['token'] !== '' ? '&amp;token=' . ew_e(rawurlencode($ew_cfg['token'])) : '' ?></span></p>
+<?php /* X-8 (02.10.2026): die Felder des Zustandsbehaelters mit Min/Max an EINER
+         Stelle - die Tabelle hier und die Baustein-Liste unten lesen dieselbe Reihung. */
+$ew_lox_felder = array('OK' => array(0, 1), 'QUELLE' => array(0, 2),
+                       'WECHSEL' => array(0, 100000), 'ALTER' => array(-1, 1000000)); ?>
 <table class="sm-tbl">
   <tr><th><?php echo ew_t('TEXT.FELD'); ?></th><th><?php echo ew_t('TEXT.BEDEUTUNG'); ?></th><th><?php echo ew_t('TEXT.LOX_SUCHTEXT'); ?></th><th>Min</th><th>Max</th></tr>
-  <tr><td class="sm-mono">OK</td><td><?php echo ew_t('FELD.OK'); ?></td><td class="sm-mono"><?= ew_e(ew_suchtext('OK')) ?></td><td>0</td><td>1</td></tr>
-  <tr><td class="sm-mono">QUELLE</td><td><?php echo ew_t('FELD.QUELLE'); ?></td><td class="sm-mono"><?= ew_e(ew_suchtext('QUELLE')) ?></td><td>0</td><td>2</td></tr>
-  <tr><td class="sm-mono">WECHSEL</td><td><?php echo ew_t('FELD.WECHSEL'); ?></td><td class="sm-mono"><?= ew_e(ew_suchtext('WECHSEL')) ?></td><td>0</td><td>100000</td></tr>
-  <tr><td class="sm-mono">ALTER</td><td><?php echo ew_t('FELD.ALTER'); ?></td><td class="sm-mono"><?= ew_e(ew_suchtext('ALTER')) ?></td><td>-1</td><td>1000000</td></tr>
+<?php foreach ($ew_lox_felder as $ew_lf => $ew_lg) { ?>
+  <tr><td class="sm-mono"><?= ew_e($ew_lf) ?></td><td><?php echo ew_t('FELD.' . $ew_lf); ?></td><td class="sm-mono"><?= ew_e(ew_suchtext($ew_lf)) ?></td><td><?= (int) $ew_lg[0] ?></td><td><?= (int) $ew_lg[1] ?></td></tr>
+<?php } ?>
 </table>
 <p class="sm-hilfe"><?php printf(ew_t('TEXT.LOX_SUCHTEXT_HILFE'), '<span class="sm-mono">' . ew_e('OK=\v') . '</span>'); ?></p>
 <div class="sm-warnung"><?php echo ew_t('TEXT.LOX_MINVAL'); ?></div>
@@ -651,6 +654,53 @@ if (is_array($ew_proj)) {
 <p class="sm-hilfe"><?php printf(ew_t('TEXT.PROJ_HILFE'), '<span class="sm-mono">' . ew_e(ew_projekt_ordner()) . '</span>'); ?></p>
 <?php } ?>
 <div class="sm-hinweis"><?php echo ew_t('TEXT.LOX_EWOK'); ?></div>
+
+<?php /* X-8 (02.10.2026, Entscheidung 36): Komplette Baustein-Liste. Typ, Name,
+         Parameter und Verbindung stehen in [BAUSTEIN] der Sprachdateien; Adressen,
+         Suchtexte, Min/Max und der Timeout kommen aus dem Code (dieselben Quellen
+         wie oben). {Bn} in einem Text wird zur laufenden Nummer "#n".
+         Zeile: array(Kennung, Typ, Name, Parameter, Argumente, Verbindung). */
+$ew_bs_adr = 'http://' . $ew_host . '/plugins/' . $ew_plugin . '/live.php';
+$ew_bs_tok = $ew_cfg['token'] !== '' ? 'token=' . rawurlencode($ew_cfg['token']) : '';
+$ew_bs_ms = ew_behaelter_timeout_ms($ew_cfg);
+$ew_bs_feld = function ($f) use ($ew_lox_felder) {
+    return array('<span class="sm-mono">' . ew_e(ew_suchtext($f)) . '</span>',
+                 (int) $ew_lox_felder[$f][0], (int) $ew_lox_felder[$f][1]);
+};
+$ew_bs = array(
+    array('B1', 'B1_TYP', 'B1_NAME', 'B1_PARAM', array('<span class="sm-mono">' . ew_e($ew_bs_adr . ($ew_bs_tok !== '' ? '?' . $ew_bs_tok : '')) . '</span>', $ew_bs_ms), 'B1_VERB'),
+    array('B2', 'B2_TYP', 'B2_NAME', 'B2_PARAM', array(), 'B2_VERB'),
+    array('B3', 'B3_TYP', 'B3_NAME', 'B3_PARAM', array('<span class="sm-mono">' . ew_e($ew_bs_adr . '?status=1' . ($ew_bs_tok !== '' ? '&' . $ew_bs_tok : '')) . '</span>', $ew_bs_ms), 'B3_VERB'),
+    array('B4', 'T_BEFEHL', 'B4_NAME', 'P_BEFEHL', $ew_bs_feld('OK'), 'V_UNTER_B3'),
+    array('B5', 'T_BEFEHL', 'B5_NAME', 'P_BEFEHL', $ew_bs_feld('QUELLE'), 'V_UNTER_B3'),
+    array('B6', 'T_BEFEHL', 'B6_NAME', 'P_BEFEHL', $ew_bs_feld('WECHSEL'), 'V_UNTER_B3'),
+    array('B7', 'T_BEFEHL', 'B7_NAME', 'P_BEFEHL', $ew_bs_feld('ALTER'), 'V_UNTER_B3'),
+    array('B8', 'B8_TYP', 'B8_NAME', 'B8_PARAM', array(), 'B8_VERB'),
+    array('B9', 'B9_TYP', 'B9_NAME', 'B9_PARAM', array(), 'B9_VERB'),
+    array('B10', 'B10_TYP', 'B10_NAME', 'B10_PARAM', array(), 'B10_VERB'),
+    array('B11', 'B11_TYP', 'B11_NAME', 'B11_PARAM', array(), 'B11_VERB'),
+    array('B12', 'B12_TYP', 'B12_NAME', 'B12_PARAM', array(), 'B12_VERB'),
+    array('B13', 'B13_TYP', 'B13_NAME', 'B13_PARAM', array(), 'B13_VERB'),
+);
+$ew_bs_nr = array();
+foreach ($ew_bs as $ew_i => $ew_z) { $ew_bs_nr[$ew_z[0]] = $ew_i + 1; }
+$ew_bs_t = function ($schluessel) use ($ew_bs_nr) {
+    return preg_replace_callback('/\{(B\d+)\}/', function ($m) use ($ew_bs_nr) {
+        return isset($ew_bs_nr[$m[1]]) ? '#' . $ew_bs_nr[$m[1]] : $m[0];
+    }, (string) ew_t('BAUSTEIN.' . $schluessel));
+}; ?>
+<div class="sm-step"><b><?php echo ew_t('BAUSTEIN.H'); ?></b><br><br>
+<?php echo ew_t('BAUSTEIN.TEXT'); ?>
+<table class="sm-tbl">
+  <tr><th>#</th><th><?php echo ew_t('BAUSTEIN.T_TYP'); ?></th><th><?php echo ew_t('BAUSTEIN.T_NAME'); ?></th><th><?php echo ew_t('BAUSTEIN.T_PARAM'); ?></th><th><?php echo ew_t('BAUSTEIN.T_VERB'); ?></th></tr>
+<?php foreach ($ew_bs as $ew_i => $ew_z) {
+    $ew_p = $ew_bs_t($ew_z[3]);
+    if ($ew_z[4]) { $ew_p = vsprintf($ew_p, $ew_z[4]); } ?>
+  <tr><td><?= $ew_i + 1 ?></td><td><?php echo $ew_bs_t($ew_z[1]); ?></td><td><span class="sm-mono"><?php echo $ew_bs_t($ew_z[2]); ?></span></td><td><?php echo $ew_p; ?></td><td><?php echo $ew_bs_t($ew_z[5]); ?></td></tr>
+<?php } ?>
+</table>
+<div class="sm-hinweis"><?php echo $ew_bs_t('ERLAEUTERUNG'); ?></div>
+</div>
 </div>
 
 <!-- ================= Test und Protokoll ================= -->

@@ -1,6 +1,6 @@
 # LoxBerry-Plugin „Ecowitt-Weiche"
 
-Version 0.9.16
+Version 0.9.17
 
 Holt die Messwerte einer Ecowitt-Wetterstation über **zwei** Netzwerkschnittstellen
 und reicht die Antwort derjenigen durch, die gerade trägt. In der Loxone-Projektdatei
@@ -305,6 +305,18 @@ nicht an der Station.
   Feld ist rot umrandet; das Wortzeichen kommt nie zurück. „Einstellungen sichern“
   warnt gelb (`_warnung`, nur Namen); Kopfzeilen `_…` werden beim Zurückspielen
   übergangen.
+
+## Fassung 0.9.17
+
+Baustein-Liste zum Nachbauen (Nachzug B: X-8, Hausregel A4).
+Gemessen mit der gerenderten Oberfläche unter PHP 7.4 und 8.5 gegen die mitgelieferten Vorlagen; nicht am Gerät.
+
+* **Baustein-Liste zum Nachbauen:** Der Reiter „Einbindung in Loxone“ führt jetzt eine nummerierte Liste
+  (# | Baustein | Name | Parameter | Eingänge verbinden mit): Datenbehälter mit der neuen Adresse, Zustandsbehälter
+  `live.php?status=1` mit den Befehlen OK, QUELLE, WECHSEL und ALTER samt Suchtext und Min/Max, dazu eine
+  Ausfallerkennung (NICHT an OK, Schwellwertschalter an ALTER, ODER, Einschaltverzögerung, Benachrichtigung) und ein
+  optionaler Status-Baustein für die Quelle. Adresse, Wortzeichen und der nötige Timeout stehen fertig eingesetzt.
+* **In Loxone:** nichts zwingend zu tun. Wer die Ausfallerkennung noch nicht hat, baut sie nach der Liste nach.
 
 ## Lizenz
 

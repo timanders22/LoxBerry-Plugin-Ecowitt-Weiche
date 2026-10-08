@@ -1,6 +1,6 @@
 # LoxBerry-Plugin „Ecowitt-Weiche"
 
-Version 0.9.17
+Version 0.9.18
 
 Holt die Messwerte einer Ecowitt-Wetterstation über **zwei** Netzwerkschnittstellen
 und reicht die Antwort derjenigen durch, die gerade trägt. In der Loxone-Projektdatei
@@ -93,7 +93,9 @@ Fehler soll das Plugin beenden — nicht sie eine Ebene höher wiederholen.
    virtuellen HTTP-Eingangs übernehmen — den Behälter, nicht die einzelnen
    Befehle. Die Abfragezeit bleibt, wie sie war. **Den Timeout des Behälters
    auf mindestens die Gesamtfrist plus eine Sekunde stellen** — bei der
-   Vorgabe von 4 s Wartezeit also 9000 ms. Der Reiter *Einbindung in Loxone*
+   Vorgabe von 3 s Wartezeit also 7000 ms. Loxone nimmt beim Timeout eines
+   Behälters höchstens 8000 ms an; deshalb sind höchstens 3 s Wartezeit
+   möglich, und 8000 ms lassen eine Sekunde Luft. Der Reiter *Einbindung in Loxone*
    nennt den Wert für die eingestellte Wartezeit. Liegt die `.Loxone`-Datei im
    Konfigurationsordner des Plugins (`config/plugins/ecowittweiche/`, über die
    Windows-Freigabe, WinSCP oder `scp`), liest er die Timeouts der Behälter,
@@ -240,7 +242,9 @@ php-curl; eine echte Station war nicht angeschlossen. Befunde mit Datei:Zeile:
 
 **Bitte in Loxone Config nachziehen:** den Timeout beider Behälter auf
 mindestens 9000 ms stellen (bei 4 s Wartezeit). Mit 4000 ms gibt Loxone auf,
-bevor die Weiche auf die Ersatzseite umgeschaltet hat.
+bevor die Weiche auf die Ersatzseite umgeschaltet hat. *Berichtigt in 0.9.18:
+Loxone nimmt höchstens 8000 ms an; seitdem gelten höchstens 3 s Wartezeit und
+ein Timeout von 7000 bis 8000 ms.*
 
 **Umschalten**
 
@@ -299,7 +303,7 @@ nicht an der Station.
 * **Prüfung der Behälter-Zeitgrenze:** Wer die `.Loxone`-Datei nach
   `config/plugins/ecowittweiche/` legt, bekommt in den Reitern Einbindung und Test
   angezeigt, welcher Behälter einen Timeout unter der Gesamtfrist trägt
-  (Mindestwert 9000 ms). Die Datei danach wieder entfernen – sie trägt alle
+  (Mindestwert bei 4 s Wartezeit 9000 ms; seit 0.9.18 höchstens 3 s und 7000 ms). Die Datei danach wieder entfernen – sie trägt alle
   Zugangsdaten der Anlage.
 * Nach einer Beanstandung stehen die eingetippten Werte wieder im Formular, das
   Feld ist rot umrandet; das Wortzeichen kommt nie zurück. „Einstellungen sichern“
@@ -317,6 +321,28 @@ Gemessen mit der gerenderten Oberfläche unter PHP 7.4 und 8.5 gegen die mitgeli
   Ausfallerkennung (NICHT an OK, Schwellwertschalter an ALTER, ODER, Einschaltverzögerung, Benachrichtigung) und ein
   optionaler Status-Baustein für die Quelle. Adresse, Wortzeichen und der nötige Timeout stehen fertig eingesetzt.
 * **In Loxone:** nichts zwingend zu tun. Wer die Ausfallerkennung noch nicht hat, baut sie nach der Liste nach.
+
+## Fassung 0.9.18
+
+Wartezeit und Behälter-Timeout passen zur Grenze von Loxone (Verbesserungsliste Ecowitt-k2). Loxone nimmt beim
+Timeout eines Behälters nur 10 bis 8000 ms an (vom Hausherrn am 02.10.2026 in Loxone Config festgestellt). Gemessen
+an der gerenderten Oberfläche und am Zurückspielen unter PHP 7.4 und 8.5; nicht am Gerät.
+
+* **Wartezeit höchstens 3 s.** Die Weiche braucht im Behälter zweimal die Wartezeit plus eine Sekunde. Mit der
+  bisherigen Vorgabe von 4 s wären das 9000 ms gewesen – mehr, als Loxone annimmt. Das Formular nimmt jetzt 1 bis
+  3 s an, die Vorgabe ist 3 s (7000 ms). Ein größerer Wert wird beanstandet und nicht gespeichert, nicht still
+  gekürzt.
+* **Gespeicherte 4 s bleiben, bis jemand speichert.** Eine Anlage mit gespeicherten 4 s (oder mehr) arbeitet nach
+  dem Update weiter wie bisher. Die Reiter *Einstellungen*, *Einbindung in Loxone* und *Test* sagen, dass der Wert
+  über der Grenze liegt, und das nächste Speichern verlangt 1 bis 3 s.
+* **Sicherungen mit 4 s lassen sich weiter zurückspielen.** Das Zurückspielen nimmt wie bisher 1 bis 30 s an,
+  übernimmt den Wert unverändert und sagt dazu, dass er über der Grenze liegt.
+* **Reiter *Einbindung in Loxone*:** nennt höchstens 8000 ms und sagt die Grenze. Liegt die gespeicherte Wartezeit
+  darüber, steht dort rot, welcher Timeout nötig wäre und dass die Wartezeit auf höchstens 3 s zu stellen ist.
+* Hilfe und README nennen 7000 ms bei 3 s statt 9000 ms bei 4 s.
+
+**In Loxone:** den Timeout beider Behälter (Datenbehälter und Zustandsbehälter `live.php?status=1`) auf 7000 bis
+8000 ms stellen und im Reiter *Einstellungen* eine Wartezeit von 3 s speichern.
 
 ## Lizenz
 

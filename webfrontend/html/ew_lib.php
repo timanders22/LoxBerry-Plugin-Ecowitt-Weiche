@@ -115,7 +115,7 @@ function ew_vorgaben()
         'primaer'     => '',
         'ersatz'      => '',
         'pfad'        => '/get_livedata_info',
-        'timeout'     => 4,
+        'timeout'     => 3,          // k2: bis 0.9.17 4 (9000 ms > 8000 ms)
         'token'       => '',
         'pruefe_wert' => 1,
     );
@@ -134,11 +134,23 @@ function ew_vorgaben()
 define('EW_MAX_ANTWORT', 1048576);
 
 /* Obergrenze in Sekunden fuer BEIDE Schnittstellen zusammen. Die Wartezeit
-   je Adresse (1-30 s) gilt weiter, ein Aufruf des Endpunkts dauert aber nie
+   je Adresse (1-3 s, gespeichert bis 30 s - k2) gilt weiter, ein Aufruf des Endpunkts dauert aber nie
    laenger als ew_gesamtfrist(). Bis 0.9.14 konnten es 2 x 30 s werden, und
    schon ab 9 s je Seite mehr als der Abrufabstand des Miniservers (16 s)
    (Pruefer code, Befund 11). */
 define('EW_GESAMTFRIST', 10);
+
+/* k2 (Bau 08.10.2026): Loxone nimmt beim Timeout eines Behaelters nur
+   10-8000 ms an (Hausherr, 02.10.2026, in Loxone Config). Der Behaelter
+   braucht die Gesamtfrist plus eine Sekunde, also 2 x Wartezeit + 1 s; mit
+   4 s (Vorgabe bis 0.9.17) waeren es 9000 ms. Das Formular nimmt deshalb
+   hoechstens EW_WARTEZEIT_MAX an (3 s -> 7000 ms). Gespeicherte und
+   gesicherte Werte bis EW_WARTEZEIT_LESBAR (die Grenze bis 0.9.17) bleiben
+   lesbar und wirken weiter - geaendert wird nichts still (Entscheidung
+   Nr. 19); Oberflaeche und Zurueckspielen sagen es (X-3). */
+define('EW_LOX_TIMEOUT_MAX', 8000);
+define('EW_WARTEZEIT_MAX', 3);
+define('EW_WARTEZEIT_LESBAR', 30);
 
 /* Solange die primaere Seite vor hoechstens so vielen Sekunden verworfen
    wurde und seither die Ersatzseite traegt, wird die Ersatzseite ZUERST
@@ -166,15 +178,29 @@ define('EW_STATIONSZEIT_AB', 1577836800);
  *  Adresse, hoechstens EW_GESAMTFRIST. */
 function ew_gesamtfrist(array $c)
 {
-    $t = isset($c['timeout']) ? (int) $c['timeout'] : 4;
+    $t = isset($c['timeout']) ? (int) $c['timeout'] : (int) ew_vorgaben()['timeout'];
     return max(1, min(EW_GESAMTFRIST, 2 * max(1, $t)));
 }
 
-/** Timeout, den der Behaelter in Loxone mindestens braucht (Millisekunden):
- *  die Gesamtfrist und eine Sekunde fuer den Weg. */
-function ew_behaelter_timeout_ms(array $c)
+/** Timeout, den der Behaelter in Loxone braucht (Millisekunden): die
+ *  Gesamtfrist und eine Sekunde fuer den Weg - ohne Ruecksicht auf Loxone. */
+function ew_behaelter_timeout_noetig_ms(array $c)
 {
     return (ew_gesamtfrist($c) + 1) * 1000;
+}
+
+/** Timeout, der im Behaelter einzutragen ist (Millisekunden): der noetige,
+ *  hoechstens EW_LOX_TIMEOUT_MAX - mehr nimmt Loxone nicht an (k2). Reicht
+ *  das nicht, sagt es ew_wartezeit_zu_lang(). */
+function ew_behaelter_timeout_ms(array $c)
+{
+    return min(EW_LOX_TIMEOUT_MAX, ew_behaelter_timeout_noetig_ms($c));
+}
+
+/** k2: braucht die gespeicherte Wartezeit mehr Timeout, als Loxone annimmt? */
+function ew_wartezeit_zu_lang(array $c)
+{
+    return ew_behaelter_timeout_noetig_ms($c) > EW_LOX_TIMEOUT_MAX;
 }
 
 /* ------------------------------------------------------------------
@@ -182,8 +208,9 @@ function ew_behaelter_timeout_ms(array $c)
  * Projektdatei - nur, wenn sie dem Plugin vorliegt.
  *
  * Anlass: beide Behaelter dieser Anlage ("Wetterstation Ecowitt" VHI2 und
- * "Ecowitt-Weiche Zustand" VHI28) trugen 4000 ms; noetig sind bei der
- * Vorgabe 9000 ms (Befunde 30.09.2026, "Zu tun in Loxone Config").
+ * "Ecowitt-Weiche Zustand" VHI28) trugen 4000 ms; noetig waren bei der
+ * damaligen Vorgabe von 4 s 9000 ms (Befunde 30.09.2026, "Zu tun in Loxone
+ * Config"). Seit k2 (0.9.18) sind es hoechstens 3 s und 7000 ms.
  *
  * WARUM KEIN UPLOAD: am Geraet gilt upload_max_filesize = 2M, eine
  * .Loxone-Datei dieser Anlage hat 3-4 MB, und das Plugin kann die Grenze
@@ -363,8 +390,10 @@ function ew_pfad_taugt($p)
         && preg_match('#^/[A-Za-z0-9._~%!$&*+,;=:@/?\-]{0,200}\z#', $p) === 1;
 }
 
-/** Wartezeit je Adresse: ganze Zahl 1-30. Rueckgabe die Zahl oder null. */
-function ew_timeout_wert($t)
+/** Wartezeit je Adresse: ganze Zahl 1 bis $hoechst. Rueckgabe die Zahl oder
+ *  null. Das Formular nimmt hoechstens EW_WARTEZEIT_MAX an (k2); gelesen und
+ *  zurueckgespielt wird bis EW_WARTEZEIT_LESBAR (ew_wert_pruefen()). */
+function ew_timeout_wert($t, $hoechst = EW_WARTEZEIT_MAX)
 {
     if (is_int($t)) {
         $n = $t;
@@ -373,7 +402,7 @@ function ew_timeout_wert($t)
     } else {
         return null;
     }
-    return ($n >= 1 && $n <= 30) ? $n : null;
+    return ($n >= 1 && $n <= (int) $hoechst) ? $n : null;
 }
 
 /** Schalter: 0 oder 1 (als Zahl oder Ziffer). Rueckgabe 0/1 oder null. */
@@ -442,7 +471,10 @@ function ew_wert_pruefen($k, $w)
         $wert = $w;
         break;
     case 'timeout':
-        $wert = ew_timeout_wert($w);
+        /* k2: eine Sicherung aus 0.9.17 und frueher (Vorgabe 4 s) muss
+         * zurueckspielbar bleiben - die Grenze der damaligen Fassungen gilt
+         * hier weiter; ew_sicherung_lesen() gibt den Hinweis. */
+        $wert = ew_timeout_wert($w, EW_WARTEZEIT_LESBAR);
         $ok = $wert !== null;
         break;
     case 'pruefe_wert':
@@ -649,7 +681,7 @@ function ew_config($erzeugen = true)
         $c['token'] = ew_token_erzeugen();
         ew_config_speichern($c);
     }
-    $c['timeout'] = max(1, min(30, (int) $c['timeout']));
+    $c['timeout'] = max(1, min(EW_WARTEZEIT_LESBAR, (int) $c['timeout']));
     return $c;
 }
 
@@ -1331,6 +1363,12 @@ function ew_sicherung_lesen($roh, &$namen = null)
     }
     if (!$mangel && $neu['token'] === '') {
         $hinweise[] = ew_t('TEXT.SICH_OHNE_TOKEN');
+    }
+    /* k2: eine Wartezeit ueber EW_WARTEZEIT_MAX wird uebernommen, wie sie
+     * ist, und gesagt - nie still gekuerzt. */
+    if (!$mangel && ew_wartezeit_zu_lang($neu)) {
+        $hinweise[] = sprintf(ew_t('TEXT.SICH_WARTEZEIT_ALT'), (int) $neu['timeout'],
+            ew_behaelter_timeout_noetig_ms($neu), EW_LOX_TIMEOUT_MAX, EW_WARTEZEIT_MAX);
     }
     return array($mangel ? null : $neu, $mangel, $anzahl, $hinweise);
 }

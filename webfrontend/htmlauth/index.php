@@ -200,9 +200,10 @@ if ($ew_post && isset($_POST['speichern'])) {
     $ew_roh = ew_feld('timeout');
     if ($ew_roh === '') {
         $ew_neu['timeout'] = $ew_vg['timeout'];
-        $ew_hinweise[] = ew_t('TEXT.TIMEOUT_VORGABE');
+        $ew_hinweise[] = sprintf(ew_t('TEXT.TIMEOUT_VORGABE'), (int) $ew_vg['timeout']);
     } elseif (ew_timeout_wert($ew_roh) === null) {
-        $ew_mangel[] = sprintf(ew_t('TEXT.TIMEOUT_UNGUELTIG'), ew_kurz($ew_roh, 20));
+        $ew_mangel[] = sprintf(ew_t('TEXT.TIMEOUT_UNGUELTIG'), ew_kurz($ew_roh, 20), EW_WARTEZEIT_MAX,
+            EW_LOX_TIMEOUT_MAX);
         $ew_falsch[] = 'timeout';
     } else {
         $ew_neu['timeout'] = ew_timeout_wert($ew_roh);
@@ -552,8 +553,14 @@ if ($ew_rahmen) {
 
 <div class="sm-feld">
   <label><?php echo ew_t('TEXT.L_TIMEOUT'); ?></label>
-  <input data-role="none" type="number" min="1" max="30" name="timeout" value="<?= ew_e(ew_eingabe('timeout', $ew_cfg['timeout'])) ?>"<?= ew_markierung('timeout') ?>>
+  <input data-role="none" type="number" min="1" max="<?= (int) EW_WARTEZEIT_MAX ?>" name="timeout" value="<?= ew_e(ew_eingabe('timeout', $ew_cfg['timeout'])) ?>"<?= ew_markierung('timeout') ?>>
   <p class="sm-hilfe"><?php echo ew_t('TEXT.H_TIMEOUT'); ?></p>
+<?php /* k2 (X-3): eine gespeicherte Wartezeit ueber der Grenze wirkt weiter,
+         das naechste Speichern weist sie ab - das steht hier VORHER. */
+if (ew_wartezeit_zu_lang($ew_cfg)) { ?>
+  <div class="sm-warnung"><?php printf(ew_t('TEXT.TIMEOUT_ALT'), (int) $ew_cfg['timeout'], EW_WARTEZEIT_MAX,
+      EW_LOX_TIMEOUT_MAX, ew_behaelter_timeout_noetig_ms($ew_cfg)); ?></div>
+<?php } ?>
 </div>
 
 <div class="sm-feld">
@@ -631,7 +638,13 @@ $ew_lox_felder = array('OK' => array(0, 1), 'QUELLE' => array(0, 2),
 
 <h3><?php echo ew_t('TEXT.LOX_AUSFALL_H'); ?></h3>
 <div class="sm-step"><?php echo ew_t('TEXT.LOX_503'); ?></div>
-<div class="sm-warnung"><?php printf(ew_t('TEXT.LOX_TIMEOUT'), ew_behaelter_timeout_ms($ew_cfg), ew_gesamtfrist($ew_cfg), (int) $ew_cfg['timeout'], EW_GESAMTFRIST); ?></div>
+<?php /* k2: hoechstens EW_LOX_TIMEOUT_MAX - mehr nimmt Loxone nicht an. */
+if (ew_wartezeit_zu_lang($ew_cfg)) { ?>
+<div class="sm-fehler"><?php printf(ew_t('TEXT.LOX_TIMEOUT_ZU_LANG'), (int) $ew_cfg['timeout'], ew_behaelter_timeout_noetig_ms($ew_cfg),
+    EW_LOX_TIMEOUT_MAX, EW_WARTEZEIT_MAX, (2 * EW_WARTEZEIT_MAX + 1) * 1000); ?></div>
+<?php } else { ?>
+<div class="sm-warnung"><?php printf(ew_t('TEXT.LOX_TIMEOUT'), ew_behaelter_timeout_ms($ew_cfg), ew_gesamtfrist($ew_cfg), (int) $ew_cfg['timeout'], EW_GESAMTFRIST, EW_LOX_TIMEOUT_MAX, EW_WARTEZEIT_MAX); ?></div>
+<?php } ?>
 <?php /* b1: die Behaelter aus der abgelegten Projektdatei. */
 if (is_array($ew_proj)) {
     $ew_pr = ew_pruef_behaelter($ew_proj);
@@ -815,6 +828,12 @@ $ew_selbst[] = array('was' => ew_t('TEXT.S_ANTWORTET'), 'lage' => $ew_r[0], 'wie
    ohne sie "nicht feststellbar" mit dem noetigen Mindestwert. */
 $ew_r = is_array($ew_proj) ? ew_pruef_behaelter($ew_proj) : array('hinweis', ew_t('TEST.EP_NUR_OFFEN'));
 $ew_selbst[] = array('was' => ew_t('TEXT.S_BEHAELTER'), 'lage' => $ew_r[0], 'wie' => $ew_r[1]);
+
+/* k2: passt die Wartezeit zu dem Timeout, den Loxone annimmt (hoechstens
+   EW_LOX_TIMEOUT_MAX)? Gemessen wird die gespeicherte Einstellung. */
+$ew_selbst[] = array('was' => ew_t('TEXT.S_WARTEZEIT'), 'lage' => ew_wartezeit_zu_lang($ew_cfg) ? 'fehl' : 'ok',
+    'wie' => sprintf(ew_t(ew_wartezeit_zu_lang($ew_cfg) ? 'TEST.WARTEZEIT_FEHL' : 'TEST.WARTEZEIT_OK'),
+        (int) $ew_cfg['timeout'], ew_behaelter_timeout_noetig_ms($ew_cfg), EW_LOX_TIMEOUT_MAX, EW_WARTEZEIT_MAX));
 
 $ew_cfgdatei = ew_paths()['cfgdatei'];
 $ew_schreib = is_writable(is_file($ew_cfgdatei) ? $ew_cfgdatei : dirname($ew_cfgdatei));

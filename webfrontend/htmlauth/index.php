@@ -508,6 +508,33 @@ if ($ew_rahmen) {
 <?php } elseif (is_string($ew_fehler_m)) { ?><div class="sm-fehler"><?= ew_e($ew_fehler_m) ?></div><?php }
 } ?>
 
+<?php /* Kopf (Entscheidung Nr. 43, seit 0.9.19): Statusuebersicht ueber den
+   Reitern, immer sichtbar. Nur der Stand des letzten Abrufs aus stand.json
+   ($ew_stand, oben schon gelesen) - die Seite fragt die Station dafuer NICHT
+   an. Die Weiche hat keinen Dienst: live.php antwortet auf jede Anfrage des
+   Miniservers. Die Kacheln im Reiter Test bleiben dort. */
+$ew_k_lg = isset($ew_stand['letzte_gute']) ? (int) $ew_stand['letzte_gute'] : 0;
+$ew_k_ts = isset($ew_stand['ts']) ? (int) $ew_stand['ts'] : 0;
+$ew_k_q = isset($ew_stand['quelle']) ? (string) $ew_stand['quelle'] : ''; ?>
+<table class="sm-tbl" style="max-width:620px">
+<tr><th><?php echo ew_t('TEXT.KOPF_EIGENSCHAFT'); ?></th><th><?php echo ew_t('TEXT.KOPF_WERT'); ?></th></tr>
+<tr><td><?php echo ew_t('TEXT.KOPF_DIENST'); ?></td><td><?php echo ew_t('TEXT.KOPF_OHNE_DIENST'); ?></td></tr>
+<tr><td><?php echo ew_t('TEXT.TRAEGT_GERADE'); ?></td>
+<?php if (empty($ew_stand)) { ?>
+  <td><?php echo ew_t('TEXT.KOPF_NOCH_KEIN_ABRUF'); ?></td>
+<?php } elseif ($ew_k_q === 'primaer' || $ew_k_q === 'ersatz') { ?>
+  <td class="sm-an"><?= $ew_k_q === 'primaer' ? ew_t('TEXT.PRIMAER') : ew_t('TEXT.ERSATZ') ?></td>
+<?php } else { ?>
+  <td class="sm-aus"><?php echo ew_t('TEXT.KOPF_KEINE_SEITE'); ?></td>
+<?php } ?></tr>
+<tr><td><?php echo ew_t('TEXT.LETZTE_GUTE'); ?></td>
+  <td><?= $ew_k_lg > 0 ? ew_e(date('d.m.Y H:i:s', $ew_k_lg)) . ' (' . ew_e(ew_alter_text(time() - $ew_k_lg)) . ')' : '—' ?></td></tr>
+<tr><td><?php echo ew_t('TEXT.LETZTER_ABRUF'); ?></td>
+  <td><?= $ew_k_ts > 0 ? ew_e(date('d.m.Y H:i:s', $ew_k_ts)) . ' (' . ew_e(ew_alter_text(time() - $ew_k_ts)) . ')' : '—' ?></td></tr>
+<tr><td><?php echo ew_t('TEXT.WECHSEL_GESAMT'); ?></td>
+  <td><?= (int) (isset($ew_stand['wechsel']) ? $ew_stand['wechsel'] : 0) ?></td></tr>
+</table>
+
 <!-- Die Reiterleiste steht AUSGESCHRIEBEN da, nicht in einer Schleife
      erzeugt. Umgeschaltet wird ueber den Server, damit jeder Reiter
      verlinkbar und die Seite ohne Skript bedienbar bleibt; das Merkmal am
@@ -525,6 +552,7 @@ if ($ew_rahmen) {
 
 <!-- ================= Einstellungen ================= -->
 <div class="sm-seite<?= $ew_tab === 'tab-settings' ? ' sm-active' : '' ?>" id="tab-settings">
+<div class="sm-hinweis"><?php echo ew_t('TEXT.WAS_IST_DAS'); ?></div>
 <h2><?php echo ew_t('TEXT.H_EINSTELLUNGEN'); ?></h2>
 
 <div class="sm-step"><?php echo ew_t('TEXT.WARUM'); ?></div>

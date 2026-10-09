@@ -494,6 +494,10 @@ if ($ew_rahmen) {
 /* Eigene Zutat (X-2, Verbesserungsbau 01.10.2026): das beanstandete Feld
    nach einer Abweisung, wie Heimkino 1.3.16. */
 .sm-wrap input.sm-beanstandet { border: 2px solid #c62828 !important; background-color: #fff5f5; }
+/* Ergaenzung (Welle Bild, Entscheidung 45): Bild der Bausteine aus dem gemeinsamen Musterprojekt. */
+.sm-bild { margin: 12px 0; }
+.sm-bild img { max-width: 100%; height: auto; border: 1px solid #ccc; border-radius: 4px; background: #fff; }
+.sm-bild figcaption { font-size: .9em; color: #555; margin-top: 4px; }
 </style>
 
 <div class="sm-wrap">
@@ -741,6 +745,11 @@ $ew_bs_t = function ($schluessel) use ($ew_bs_nr) {
 <?php } ?>
 </table>
 <div class="sm-hinweis"><?php echo $ew_bs_t('ERLAEUTERUNG'); ?></div>
+<figure class="sm-bild">
+<img src="einbindung_loxone.png" alt="<?= ew_e(ew_t('BAUSTEIN.BILD_ALT')) ?>" loading="lazy">
+<figcaption><?= ew_e(ew_t('BAUSTEIN.BILD_UNTERSCHRIFT')) ?></figcaption>
+</figure>
+<p class="sm-hilfe"><?php echo ew_t('BAUSTEIN.MUSTERPROJEKT'); ?></p>
 </div>
 </div>
 

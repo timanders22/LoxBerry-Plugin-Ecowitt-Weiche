@@ -1,6 +1,6 @@
 # LoxBerry-Plugin „Ecowitt-Weiche"
 
-Version 0.9.20
+Version 0.9.21
 
 Holt die Messwerte einer Ecowitt-Wetterstation über **zwei** Netzwerkschnittstellen
 und reicht die Antwort derjenigen durch, die gerade trägt. In der Loxone-Projektdatei
@@ -12,6 +12,17 @@ Alle Suchtexte bleiben gültig, denn das JSON ist dasselbe.
 * Reicht die Stationsantwort **wortgetreu** durch und stellt nur zwei eigene Felder voran.
 * Fallen beide Seiten aus, kommt HTTP 503 **ohne** Daten — der Ausfall bleibt sichtbar.
 * Schaltet nichts, misst nichts, speichert keine Messwerte zwischen.
+
+## Neu in 0.9.21
+
+Reiter „Einbindung in Loxone“ zeigt ein Bild der Bausteine aus dem gemeinsamen Musterprojekt und
+verlinkt die Projektdatei.
+
+* Unter der Baustein-Liste steht das Bild der Seite „Ecowitt-Weiche“ aus dem
+  [LoxBerry-Plugins Musterprojekt](https://github.com/timanders22/LoxBerry-Plugins-Musterprojekt); das Bild liegt im Plugin,
+  nachgeladen wird nichts. Config kürzt lange Bausteinnamen, die vollen Namen stehen in der Tabelle.
+* Baustein-Liste unverändert.
+* Gerendert unter PHP 7.4, 8.4 und 8.5, nicht am Gerät angesehen.
 
 ## Neu in 0.9.20
 
@@ -123,7 +134,10 @@ Fehler soll das Plugin beenden — nicht sie eine Ebene höher wiederholen.
    die auf `live.php` zeigen, selbst aus und meldet jeden zu kurzen — dort und
    im Reiter *Test*. Ein Hochladen gibt es nicht: PHP nimmt am LoxBerry
    höchstens 2 MB je Datei an. Die Datei trägt die Adressen samt Wortzeichen;
-   nach der Prüfung wieder entfernen.
+   nach der Prüfung wieder entfernen. Die Ausfallerkennung aus der Baustein-Liste
+   desselben Reiters steht fertig verbunden auf der Seite „Ecowitt-Weiche“ im
+   [LoxBerry-Plugins Musterprojekt](https://github.com/timanders22/LoxBerry-Plugins-Musterprojekt),
+   einer gemeinsamen Projektdatei mit allen Plugin-Seiten und Vorlagen.
 
 ## Das Protokoll
 

@@ -1,6 +1,6 @@
 # LoxBerry-Plugin „Ecowitt-Weiche"
 
-Version 0.9.19
+Version 0.9.20
 
 Holt die Messwerte einer Ecowitt-Wetterstation über **zwei** Netzwerkschnittstellen
 und reicht die Antwort derjenigen durch, die gerade trägt. In der Loxone-Projektdatei
@@ -12,6 +12,17 @@ Alle Suchtexte bleiben gültig, denn das JSON ist dasselbe.
 * Reicht die Stationsantwort **wortgetreu** durch und stellt nur zwei eigene Felder voran.
 * Fallen beide Seiten aus, kommt HTTP 503 **ohne** Daten — der Ausfall bleibt sichtbar.
 * Schaltet nichts, misst nichts, speichert keine Messwerte zwischen.
+
+## Neu in 0.9.20
+
+Baustein-Liste in der Schreibweise des Leitungswerkzeugs.
+
+* **Baustein-Liste (Reiter Einbindung in Loxone):** Die Spalte „Eingänge verbinden mit“ nennt die
+  Quellen in fester Form: `Ausgang von Ecowitt-Weiche OK (#4)` statt „Eingang = #4 (OK)“,
+  `Ausgang der einzigen Quelle (#11)` statt „Eingang = #11 (einzige Quelle)“, am Statusbaustein
+  `V1 = Ausgang von Ecowitt-Weiche Quelle (#5)` statt „AI1 = #5 (QUELLE)“. Gleiche Bausteine,
+  gleiche Verbindungen.
+* Gerendert unter PHP 7.4, 8.4 und 8.5, nicht am Gerät angesehen.
 
 ## Neu in 0.9.19
 

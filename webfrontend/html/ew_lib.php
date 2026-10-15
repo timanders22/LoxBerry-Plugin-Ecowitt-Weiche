@@ -1857,3 +1857,138 @@ function ew_suchtext($feld)
 {
     return '\i;' . $feld . '=\i\v';
 }
+
+/* ==================================================================
+ * LOXONE-VORLAGEN (Welle Bild 13, 0.9.22)
+ * ==================================================================
+ * Entwurf Welle 13 ew, Entscheidung 10 (Hausherr 15.10.2026, wie
+ * empfohlen): zwei Knoepfe im Reiter Einbindung in Loxone liefern die
+ * Vorlagen der beiden Behaelter, Adresse mit Rechnername und Wortzeichen
+ * eingesetzt. Bis 0.9.21 gab es keine Vorlage; die vier Zustandsbefehle
+ * standen nur als Tabelle, und wer keinen Stationsbehaelter hatte, tippte
+ * jeden Befehl ab. Titel bleiben fest deutsch (Regeln/07, Sprachregel
+ * 13.10.2026), nur die Kommentare kommen aus der Sprachdatei. Einen Timeout
+ * traegt eine Vorlage nicht (VirtualInHttp kennt nur Adresse und
+ * Abfragezeit) - der Reiter nennt den Wert, der danach einzutragen ist.
+ * Reine Oberflaeche: Abruf, Beurteilung und Endpunkt bleiben, wie sie waren.
+ * ================================================================== */
+
+/** Felder der Zustandszeile (live.php?status=1): Feld => array(MinVal,
+ *  MaxVal, Signed, Einheit, Titel des Befehls, Kommentarschluessel). EINE
+ *  Stelle fuer die Feldtabelle im Reiter, die Baustein-Liste und die Vorlage
+ *  (bis 0.9.21 stand die Reihung als $ew_lox_felder in index.php, X-8). */
+function ew_lox_felder()
+{
+    return array(
+        'OK'      => array(0, 1, false, '<v>', 'Ecowitt-Weiche OK', 'VORLAGE.Z_OK'),
+        'QUELLE'  => array(0, 2, false, '<v>', 'Ecowitt-Weiche Quelle', 'VORLAGE.Z_QUELLE'),
+        'WECHSEL' => array(0, 100000, false, '<v>', 'Ecowitt-Weiche Wechsel', 'VORLAGE.Z_WECHSEL'),
+        'ALTER'   => array(-1, 1000000, true, '<v> s', 'Ecowitt-Weiche Alter', 'VORLAGE.Z_ALTER'),
+    );
+}
+
+/** Befehle der Beispielvorlage "Wetterstation Ecowitt": array(Titel,
+ *  Befehlserkennung, Signed, MinVal, MaxVal, Einheit, Kommentarschluessel).
+ *  Die Suchtexte laufen so an der Hausanlage (mit lebenden Werten am
+ *  08.09.2026 bestaetigt); die Grenzen tragen einen Sicherheitsabstand, die
+ *  Skalierung ist 1:1 - die Einheiten stellt man an der Konsole ein (Grad C,
+ *  km/h, mm, hPa). Welche Felder ankommen, bestimmen Station und Sensoren;
+ *  das Plugin selbst prueft nur 0x07 (Inhaltspruefung). */
+function ew_wetter_befehle()
+{
+    return array(
+        array('Außentemperatur', '\i"0x02","val":"\i\v', true, -50, 70, '<v.1> °C', 'VORLAGE.W01'),
+        array('Außenfeuchte (Proz)', '\i"id":"0x07","val":"\i\v', false, 0, 100, '<v.0> %', 'VORLAGE.W02'),
+        array('Taupunkt', '\i"id":"0x03","val":"\i\v', true, -60, 50, '<v.1> °C', 'VORLAGE.W03'),
+        array('Windrichtung', '\i"id":"0x0A","val":"\i\v', false, 0, 360, '<v.0>°', 'VORLAGE.W04'),
+        array('Windgeschwindigkeit', '\i"id":"0x0B","val":"\i\v', false, 0, 300, '<v.1> km/h', 'VORLAGE.W05'),
+        array('Windböe', '\i"id":"0x0C","val":"\i\v', false, 0, 300, '<v.1> km/h', 'VORLAGE.W06'),
+        array('Windböe Tageshöchstwert', '\i"id":"0x19","val":"\i\v', false, 0, 300, '<v.1> km/h', 'VORLAGE.W07'),
+        array('Solarstrahlung', '\i"id":"0x15","val":"\i\v', false, 0, 2000, '<v.0> W/m²', 'VORLAGE.W08'),
+        array('UV-Index', '\i"id":"0x17","val":"\i\v', false, 0, 20, '<v.0>', 'VORLAGE.W09'),
+        array('Regenrate', '"0x0E"\i:\i"\v', false, 0, 500, '<v.1> mm/h', 'VORLAGE.W10'),
+        array('Regen seit Regenbeginn', '"0x0D"\i:\i"\v', false, 0, 1000, '<v.1> mm', 'VORLAGE.W11'),
+        array('Regen heute', '"0x10"\i:\i"\v', false, 0, 1000, '<v.1> mm', 'VORLAGE.W12'),
+        array('Regen Woche', '"0x11"\i:\i"\v', false, 0, 2000, '<v.1> mm', 'VORLAGE.W13'),
+        array('Regen Monat', '"0x12"\i:\i"\v', false, 0, 5000, '<v.1> mm', 'VORLAGE.W14'),
+        array('Regen Jahr', '"0x13"\i:\i"\v', false, 0, 10000, '<v.0> mm', 'VORLAGE.W15'),
+        array('Innentemperatur', '"intemp"\i:\i"\v', true, -20, 60, '<v.1> °C', 'VORLAGE.W16'),
+        array('Innenfeuchte (Proz)', '"inhumi"\i:\i"\v', false, 0, 100, '<v.0> %', 'VORLAGE.W17'),
+        array('Luftdruck relativ', '"rel"\i:\i"\v', false, 0, 1200, '<v.1> hPa', 'VORLAGE.W18'),
+        array('Luftdruck absolut', '"abs"\i:\i"\v', false, 0, 1200, '<v.1> hPa', 'VORLAGE.W19'),
+        array('Blitz Entfernung', '"distance"\i:\i"\v', false, 0, 100, '<v.0> km', 'VORLAGE.W20'),
+        array('Blitz Anzahl', '"count"\i:\i"\v', false, 0, 100000, '<v.0>', 'VORLAGE.W21'),
+    );
+}
+
+/** Wert fuer ein XML-Merkmal (", <, >, & maskiert). */
+function ew_xml($s)
+{
+    return htmlspecialchars((string) $s, ENT_QUOTES | ENT_XML1, 'UTF-8');
+}
+
+/** Rechnername fuer die Adressen: so, wie der Browser den LoxBerry
+ *  erreicht; ohne Angabe "loxberry". Bis 0.9.21 stand der Ausdruck in
+ *  index.php - jetzt brauchen ihn auch die Vorlagen. */
+function ew_rechner()
+{
+    return (isset($_SERVER['HTTP_HOST']) && is_string($_SERVER['HTTP_HOST']) && $_SERVER['HTTP_HOST'] !== '')
+        ? $_SERVER['HTTP_HOST'] : 'loxberry';
+}
+
+/** Adresse eines Behaelters in der Form, die der Reiter zeigt:
+ *  live.php, beim Zustandsbehaelter ?status=1, dazu das Wortzeichen. */
+function ew_lox_adresse($host, array $c, $status)
+{
+    $a = 'http://' . $host . '/plugins/' . ew_paths()['plugin'] . '/live.php';
+    $q = array();
+    if ($status) {
+        $q[] = 'status=1';
+    }
+    if (isset($c['token']) && is_string($c['token']) && $c['token'] !== '') {
+        $q[] = 'token=' . rawurlencode($c['token']);
+    }
+    return $q ? $a . '?' . implode('&', $q) : $a;
+}
+
+/** Eine Vorlage "Virtueller HTTP-Eingang" in der Form der Musterprojekt-
+ *  Vorlagen (Info templateType 2, je Befehl Unit und HintText, LF). */
+function ew_vorlage_xml($titel, $kommentar, $adresse, array $befehle)
+{
+    $o = '<?xml version="1.0" encoding="utf-8"?>' . "\n";
+    $o .= '<VirtualInHttp HintText="" Title="' . ew_xml($titel) . '" Comment="' . ew_xml($kommentar)
+        . '" Address="' . ew_xml($adresse) . '" PollingTime="60">' . "\n";
+    $o .= "\t" . '<Info templateType="2" minVersion="17010727"/>' . "\n";
+    foreach ($befehle as $b) {
+        $o .= "\t" . '<VirtualInHttpCmd Title="' . ew_xml($b['titel']) . '" Comment="' . ew_xml($b['kommentar'])
+            . '" Check="' . ew_xml($b['check']) . '" Signed="' . ($b['signed'] ? 'true' : 'false')
+            . '" Analog="true" SourceValLow="0" DestValLow="0" SourceValHigh="1" DestValHigh="1" DefVal="0"'
+            . ' MinVal="' . (int) $b['min'] . '" MaxVal="' . (int) $b['max'] . '" Unit="' . ew_xml($b['einheit'])
+            . '" HintText=""/>' . "\n";
+    }
+    return $o . '</VirtualInHttp>' . "\n";
+}
+
+/** Vorlage des Zustandsbehaelters: array(Dateiname, Inhalt). */
+function ew_vorlage_zustand($host, array $c)
+{
+    $b = array();
+    foreach (ew_lox_felder() as $f => $x) {
+        $b[] = array('titel' => $x[4], 'kommentar' => ew_t($x[5]), 'check' => ew_suchtext($f),
+                     'signed' => $x[2], 'min' => $x[0], 'max' => $x[1], 'einheit' => $x[3]);
+    }
+    return array('VI_Ecowitt_Weiche_Zustand.xml',
+                 ew_vorlage_xml('Ecowitt-Weiche Zustand', ew_t('VORLAGE.Z_KOPF'), ew_lox_adresse($host, $c, true), $b));
+}
+
+/** Beispielvorlage des Stationsbehaelters: array(Dateiname, Inhalt). */
+function ew_vorlage_wetter($host, array $c)
+{
+    $b = array();
+    foreach (ew_wetter_befehle() as $x) {
+        $b[] = array('titel' => $x[0], 'kommentar' => ew_t($x[6]), 'check' => $x[1],
+                     'signed' => $x[2], 'min' => $x[3], 'max' => $x[4], 'einheit' => $x[5]);
+    }
+    return array('VI_Wetterstation_Ecowitt_Beispiel.xml',
+                 ew_vorlage_xml('Wetterstation Ecowitt', ew_t('VORLAGE.W_KOPF'), ew_lox_adresse($host, $c, false), $b));
+}

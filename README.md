@@ -1,6 +1,6 @@
 # LoxBerry-Plugin „Ecowitt-Weiche"
 
-Version 0.9.21
+Version 0.9.22
 
 Holt die Messwerte einer Ecowitt-Wetterstation über **zwei** Netzwerkschnittstellen
 und reicht die Antwort derjenigen durch, die gerade trägt. In der Loxone-Projektdatei
@@ -12,6 +12,35 @@ Alle Suchtexte bleiben gültig, denn das JSON ist dasselbe.
 * Reicht die Stationsantwort **wortgetreu** durch und stellt nur zwei eigene Felder voran.
 * Fallen beide Seiten aus, kommt HTTP 503 **ohne** Daten — der Ausfall bleibt sichtbar.
 * Schaltet nichts, misst nichts, speichert keine Messwerte zwischen.
+* Liefert die Vorlagen für Loxone Config (Zustandsbehälter und Beispiel-Stationsbehälter) und zwei
+  Baustein-Listen aus dem gemeinsamen Musterprojekt, je mit Bild und Schritt-für-Schritt-Anleitung.
+
+## Neu in 0.9.22
+
+Vollausstattung aus dem [LoxBerry-Plugins Musterprojekt](https://github.com/timanders22/LoxBerry-Plugins-Musterprojekt) mit zwei Bildern und
+Schritt-für-Schritt-Anleitung; dazu zwei Vorlagen für Loxone Config.
+
+* **Reiter Einbindung in Loxone:** zwei Baustein-Listen statt einer (56 statt 13 Zeilen) –
+  „Weiche, Ausfall und Ausweichbetrieb“ (Seite „Ecowitt-Weiche“: Ausfall beider Adressen, eingefrorene
+  Werte, LoxBerry oder Plugin weg über den Fehlerausgang der Außentemperatur, Meldung nach einer Stunde
+  Ausweichbetrieb, „Wechsel heute“ und Meldung „Weiche pendelt“; der Status „Ecowitt-Weiche“ trägt jetzt
+  Zeilen) und „Wetterwerte der Station“ (Seite „Ecowitt-Weiche Wetterwerte“: 21 Messwerte, vier Status,
+  Sturm- und Frostmeldung) –, je mit Kasten „So übernehmen Sie diese Seite“, Hinweisen und dem Bild der
+  Seite. Die Zeilen 14 und 15 der ersten Seite entfallen: Loxone Config 17 zeigt den Onlinestatus des
+  Behälters nicht im Baum; an seine Stelle tritt der Fehlerausgang der Außentemperatur, von Hand an das
+  ODER #16 und den Status #13 verbunden.
+* **Neu: Knöpfe „Vorlage Zustand herunterladen“ und „Vorlage Wetterstation herunterladen“.** Sie liefern
+  die Behälter „Ecowitt-Weiche Zustand“ (OK, Quelle, Wechsel, Alter) und „Wetterstation Ecowitt“
+  (21 Messwerte, Beispiel für GW1000/GW2000/GW3000; Felder ohne Sensor bleiben 0) als Vorlage, Adresse mit
+  Rechnername und Wortzeichen eingesetzt. Titel fest deutsch, Kommentare in der Sprache des LoxBerry.
+  Einen Timeout trägt eine Vorlage nicht: nach dem Import 7000 ms eintragen. **Wer seine Station schon in
+  Loxone hat, importiert die Stationsvorlage nicht**, sondern legt fehlende Befehle von Hand an (Tabelle
+  im Reiter) – sonst entstehen zwei Behälter für eine Station.
+* **Textberichtigungen:** Der Satz „Eine Importvorlage gibt es für dieses Plugin nicht“ ist ersetzt; die
+  Erläuterung nennt für „LoxBerry weg“ den Fehlerausgang der Außentemperatur statt des Onlinestatus;
+  der Status steht nicht mehr als „optional“ in der Liste.
+* Das Verhalten der Weiche ist unverändert.
+* Gerendert unter PHP 7.4, 8.4 und 8.5, nicht am Gerät angesehen.
 
 ## Neu in 0.9.21
 
@@ -94,7 +123,8 @@ Weiche selbst:
 | `WECHSEL` | wie oft seit der Installation umgeschaltet wurde (übersteht ein Update) |
 | `ALTER` | Sekunden seit den letzten brauchbaren Daten, −1 = noch nie. Trägt die Antwort der Station auf oberster Ebene einen eigenen Zeitstempel (`dateutc`, `timestamp` oder `time`), zählt `ALTER` ab diesem; mehr als 5 s in der Zukunft gilt er als keine Aussage. Ob die GW3000A einen liefert, ist nicht gemessen. |
 
-Diese Zeile gehört als eigener virtueller Eingang ins Haus. Sonst arbeitet die
+Diese Zeile gehört als eigener virtueller Eingang ins Haus (Vorlage: Knopf „Vorlage Zustand
+herunterladen“ im Reiter *Einbindung in Loxone*). Sonst arbeitet die
 Weiche unbemerkt, und dass eine Schnittstelle seit Wochen tot ist, fällt erst
 auf, wenn auch die zweite ausfällt.
 
@@ -134,10 +164,12 @@ Fehler soll das Plugin beenden — nicht sie eine Ebene höher wiederholen.
    die auf `live.php` zeigen, selbst aus und meldet jeden zu kurzen — dort und
    im Reiter *Test*. Ein Hochladen gibt es nicht: PHP nimmt am LoxBerry
    höchstens 2 MB je Datei an. Die Datei trägt die Adressen samt Wortzeichen;
-   nach der Prüfung wieder entfernen. Die Ausfallerkennung aus der Baustein-Liste
-   desselben Reiters steht fertig verbunden auf der Seite „Ecowitt-Weiche“ im
+   nach der Prüfung wieder entfernen. Die beiden Baustein-Listen desselben Reiters
+   stehen fertig verbunden auf den Seiten „Ecowitt-Weiche“ und „Ecowitt-Weiche Wetterwerte“ im
    [LoxBerry-Plugins Musterprojekt](https://github.com/timanders22/LoxBerry-Plugins-Musterprojekt),
-   einer gemeinsamen Projektdatei mit allen Plugin-Seiten und Vorlagen.
+   einer gemeinsamen Projektdatei mit allen Plugin-Seiten und Vorlagen; die Vorlagen beider
+   Behälter liefern die Knöpfe „Vorlage Zustand herunterladen“ und „Vorlage Wetterstation
+   herunterladen“ im selben Reiter.
 
 ## Das Protokoll
 

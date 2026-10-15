@@ -382,6 +382,20 @@ if ($ew_post && isset($_POST['ew_zurueck'])) {
     }
 }
 
+/* ---------------- Loxone-Vorlagen (Welle Bild 13, 0.9.22) ----------------
+ * Entwurf Welle 13 ew, Entscheidung 10: die Vorlagen der beiden Behaelter als Download
+ * (ew_vorlage_zustand(), ew_vorlage_wetter() in ew_lib.php). Lesen nur die Konfiguration und
+ * schreiben nichts; wie das Sichern die eine Antwort ohne Umleitung (Regeln/04). Der Wachposten
+ * oben hat einen fremden POST schon abgewiesen und $_POST geleert. */
+if ($ew_post && (isset($_POST['vorlage_zustand']) || isset($_POST['vorlage_wetter']))) {
+    $ew_vl = isset($_POST['vorlage_zustand']) ? ew_vorlage_zustand(ew_rechner(), $ew_cfg)
+                                               : ew_vorlage_wetter(ew_rechner(), $ew_cfg);
+    header('Content-Type: application/xml; charset=utf-8');
+    header('Content-Disposition: attachment; filename="' . $ew_vl[0] . '"');
+    echo $ew_vl[1];
+    exit;
+}
+
 /* ---------------- Umleitung nach jedem POST (O1, PRG) ----------------
  * Jeder POST endet mit 303 auf index.php?form=<reiter>; das Ergebnis reist
  * als Einmalmeldung. Neuladen holt dann nur die Seite, es wiederholt keine
@@ -406,7 +420,7 @@ $ew_stand = ew_stand_lesen();
    offen ist, die sie zeigen - umgeschaltet wird ueber den Server, ein
    geschlossener Reiter wird nie angesehen. */
 $ew_proj = ($ew_tab === 'tab-loxone' || $ew_tab === 'tab-test') ? ew_projekt_pruefen($ew_cfg) : null;
-$ew_host = isset($_SERVER['HTTP_HOST']) && $_SERVER['HTTP_HOST'] !== '' ? $_SERVER['HTTP_HOST'] : 'loxberry';
+$ew_host = ew_rechner();
 $ew_plugin = ew_paths()['plugin'];
 $ew_tokenteil = $ew_cfg['token'] !== '' ? '?token=' . rawurlencode($ew_cfg['token']) : '';
 
@@ -498,6 +512,11 @@ if ($ew_rahmen) {
 .sm-bild { margin: 12px 0; }
 .sm-bild img { max-width: 100%; height: auto; border: 1px solid #ccc; border-radius: 4px; background: #fff; }
 .sm-bild figcaption { font-size: .9em; color: #555; margin-top: 4px; }
+/* Welle Bild 13 (0.9.22): Abschnitte, Schritte und Hinweise je Baustein-Liste (wie Fensterbilanz 0.12.16). */
+.sm-wrap h4.sm-h4 { color: #4f7d17; font-size: 0.98em; font-weight: 700; margin: 22px 0 4px;
+    padding-top: 10px; border-top: 1px solid #e0e0e0; }
+.sm-schritte { margin: 6px 0 0 18px; padding: 0; }
+.sm-schritte li { margin: 3px 0; }
 </style>
 
 <div class="sm-wrap">
@@ -657,8 +676,7 @@ if (ew_wartezeit_zu_lang($ew_cfg)) { ?>
 <p><span class="sm-mono">http://<?= ew_e($ew_host) ?>/plugins/<?= ew_e($ew_plugin) ?>/live.php?status=1<?= $ew_cfg['token'] !== '' ? '&amp;token=' . ew_e(rawurlencode($ew_cfg['token'])) : '' ?></span></p>
 <?php /* X-8 (02.10.2026): die Felder des Zustandsbehaelters mit Min/Max an EINER
          Stelle - die Tabelle hier und die Baustein-Liste unten lesen dieselbe Reihung. */
-$ew_lox_felder = array('OK' => array(0, 1), 'QUELLE' => array(0, 2),
-                       'WECHSEL' => array(0, 100000), 'ALTER' => array(-1, 1000000)); ?>
+$ew_lox_felder = ew_lox_felder(); /* seit 0.9.22 in ew_lib.php - die Vorlage liest dieselbe Reihung */ ?>
 <table class="sm-tbl">
   <tr><th><?php echo ew_t('TEXT.FELD'); ?></th><th><?php echo ew_t('TEXT.BEDEUTUNG'); ?></th><th><?php echo ew_t('TEXT.LOX_SUCHTEXT'); ?></th><th>Min</th><th>Max</th></tr>
 <?php foreach ($ew_lox_felder as $ew_lf => $ew_lg) { ?>
@@ -667,6 +685,37 @@ $ew_lox_felder = array('OK' => array(0, 1), 'QUELLE' => array(0, 2),
 </table>
 <p class="sm-hilfe"><?php printf(ew_t('TEXT.LOX_SUCHTEXT_HILFE'), '<span class="sm-mono">' . ew_e('OK=\v') . '</span>'); ?></p>
 <div class="sm-warnung"><?php echo ew_t('TEXT.LOX_MINVAL'); ?></div>
+
+<?php /* Welle Bild 13 (0.9.22, Entwurf Welle 13 ew, Entscheidung 10): die Vorlagen beider Behaelter als
+         Download, dazu die Befehle der Stationsvorlage als Tabelle fuer alle, die ihren Behaelter schon
+         haben und nur fehlende Befehle von Hand ergaenzen (ein zweiter Import gaebe einen zweiten
+         Behaelter). Titel, Suchtext, Grenzen und Einheit aus ew_wetter_befehle() - derselben Quelle wie
+         die Vorlage. */ ?>
+<h3><?php echo ew_t('VORLAGE.H'); ?></h3>
+<div class="sm-step"><?php echo ew_t('VORLAGE.TEXT'); ?></div>
+<div class="sm-knopfreihe">
+  <form action="index.php" method="post">
+    <?php echo ew_fmt(); ?>
+    <input data-role="none" type="hidden" name="activetab" value="tab-loxone">
+    <button data-role="none" class="sm-btn sm-b-lesen" type="submit" name="vorlage_zustand" value="1"><?php echo ew_t('VORLAGE.K_ZUSTAND'); ?></button>
+  </form>
+  <form action="index.php" method="post">
+    <?php echo ew_fmt(); ?>
+    <input data-role="none" type="hidden" name="activetab" value="tab-loxone">
+    <button data-role="none" class="sm-btn sm-b-lesen" type="submit" name="vorlage_wetter" value="1"><?php echo ew_t('VORLAGE.K_WETTER'); ?></button>
+  </form>
+</div>
+<div class="sm-legende"><span><i class="sm-punkt sm-b-lesen"></i> <?php echo ew_t('LEGENDE.LESEN'); ?></span></div>
+<p class="sm-hilfe"><?php printf(ew_t('VORLAGE.HINWEIS'), ew_behaelter_timeout_ms($ew_cfg)); ?></p>
+<p class="sm-hilfe"><b><?php echo ew_t('VORLAGE.T_BEFEHLE'); ?></b></p>
+<div class="sm-breit">
+<table class="sm-tbl">
+  <tr><th>#</th><th><?php echo ew_t('VORLAGE.T_TITEL'); ?></th><th><?php echo ew_t('TEXT.LOX_SUCHTEXT'); ?></th><th>Min</th><th>Max</th><th><?php echo ew_t('VORLAGE.T_EINHEIT'); ?></th></tr>
+<?php foreach (ew_wetter_befehle() as $ew_i => $ew_wb) { ?>
+  <tr><td><?= $ew_i + 1 ?></td><td><?= ew_e($ew_wb[0]) ?></td><td class="sm-mono"><?= ew_e($ew_wb[1]) ?></td><td><?= (int) $ew_wb[3] ?></td><td><?= (int) $ew_wb[4] ?></td><td class="sm-mono"><?= ew_e($ew_wb[5]) ?></td></tr>
+<?php } ?>
+</table>
+</div>
 
 <h3><?php echo ew_t('TEXT.LOX_AUSFALL_H'); ?></h3>
 <div class="sm-step"><?php echo ew_t('TEXT.LOX_503'); ?></div>
@@ -702,55 +751,133 @@ if (is_array($ew_proj)) {
 
 <?php /* X-8 (02.10.2026, Entscheidung 36): Komplette Baustein-Liste. Typ, Name,
          Parameter und Verbindung stehen in [BAUSTEIN] der Sprachdateien; Adressen,
-         Suchtexte, Min/Max und der Timeout kommen aus dem Code (dieselben Quellen
-         wie oben). {Bn} in einem Text wird zur laufenden Nummer "#n".
+         Min/Max und der Timeout kommen aus dem Code (dieselben Quellen wie oben).
+         {Bn}/{Wn} in einem Text wird zur laufenden Nummer "#n" der jeweiligen Seite.
+         Welle Bild 13 (0.9.22; Hausherr 11.10.2026: Vollausstattung, ein absoluter Laie soll das
+         Maximum leicht uebernehmen koennen; Entwurf Welle 13 ew, Entscheidungen wie empfohlen): zwei
+         Seiten aus dem LoxBerry-Plugins Musterprojekt, dort in Loxone Config gebaut und verbunden
+         (Musterprojekt/baustein_listen.txt, Abschnitte "Ecowitt-Weiche" 25 und "Ecowitt-Weiche
+         Wetterwerte" 31 Zeilen, wortgleich). #14/#15 der ersten Seite entfallen (Loxone Config 17
+         zeigt den Onlinestatus des Behaelters nicht im Baum, statt dessen der Fehlerausgang von #2);
+         die Nummern bleiben wie im Musterprojekt. Je Seite: Ueberschrift, Kasten "So uebernehmen Sie
+         diese Seite", Tabelle, Hinweise, Bild, Link - alle immer sichtbar. Bis 0.9.21 stand hier eine
+         Tabelle mit 13 Zeilen.
          Zeile: array(Kennung, Typ, Name, Parameter, Argumente, Verbindung). */
 $ew_bs_adr = 'http://' . $ew_host . '/plugins/' . $ew_plugin . '/live.php';
 $ew_bs_tok = $ew_cfg['token'] !== '' ? 'token=' . rawurlencode($ew_cfg['token']) : '';
 $ew_bs_ms = ew_behaelter_timeout_ms($ew_cfg);
 $ew_bs_feld = function ($f) use ($ew_lox_felder) {
-    return array('<span class="sm-mono">' . ew_e(ew_suchtext($f)) . '</span>',
-                 (int) $ew_lox_felder[$f][0], (int) $ew_lox_felder[$f][1]);
+    return array((int) $ew_lox_felder[$f][0], (int) $ew_lox_felder[$f][1]);
 };
-$ew_bs = array(
-    array('B1', 'B1_TYP', 'B1_NAME', 'B1_PARAM', array('<span class="sm-mono">' . ew_e($ew_bs_adr . ($ew_bs_tok !== '' ? '?' . $ew_bs_tok : '')) . '</span>', $ew_bs_ms), 'B1_VERB'),
-    array('B2', 'B2_TYP', 'B2_NAME', 'B2_PARAM', array(), 'B2_VERB'),
-    array('B3', 'B3_TYP', 'B3_NAME', 'B3_PARAM', array('<span class="sm-mono">' . ew_e($ew_bs_adr . '?status=1' . ($ew_bs_tok !== '' ? '&' . $ew_bs_tok : '')) . '</span>', $ew_bs_ms), 'B3_VERB'),
-    array('B4', 'T_BEFEHL', 'B4_NAME', 'P_BEFEHL', $ew_bs_feld('OK'), 'V_UNTER_B3'),
-    array('B5', 'T_BEFEHL', 'B5_NAME', 'P_BEFEHL', $ew_bs_feld('QUELLE'), 'V_UNTER_B3'),
-    array('B6', 'T_BEFEHL', 'B6_NAME', 'P_BEFEHL', $ew_bs_feld('WECHSEL'), 'V_UNTER_B3'),
-    array('B7', 'T_BEFEHL', 'B7_NAME', 'P_BEFEHL', $ew_bs_feld('ALTER'), 'V_UNTER_B3'),
-    array('B8', 'B8_TYP', 'B8_NAME', 'B8_PARAM', array(), 'B8_VERB'),
-    array('B9', 'B9_TYP', 'B9_NAME', 'B9_PARAM', array(), 'B9_VERB'),
-    array('B10', 'B10_TYP', 'B10_NAME', 'B10_PARAM', array(), 'B10_VERB'),
-    array('B11', 'B11_TYP', 'B11_NAME', 'B11_PARAM', array(), 'B11_VERB'),
-    array('B12', 'B12_TYP', 'B12_NAME', 'B12_PARAM', array(), 'B12_VERB'),
-    array('B13', 'B13_TYP', 'B13_NAME', 'B13_PARAM', array(), 'B13_VERB'),
+$ew_bs_seiten = array(
+    array('kopf' => 'SEITE1_H', 'seite' => 'Ecowitt-Weiche', 'bild' => 'einbindung_loxone.png',
+          'schritte' => array('S1_1', 'S1_2', 'S1_3', 'S1_4', 'S1_5', 'S1_6', 'S1_7', 'S1_8', 'S1_9'),
+          'hinweise' => array('ERLAEUTERUNG', 'N1_1', 'N1_2', 'N1_3', 'N1_4', 'N1_5'),
+          'zeilen' => array(
+        array('B1', 'B1_TYP', 'B1_NAME', 'B1_PARAM', array('<span class="sm-mono">' . ew_e($ew_bs_adr . ($ew_bs_tok !== '' ? '?' . $ew_bs_tok : '')) . '</span>', $ew_bs_ms), 'B1_VERB'),
+        array('B2', 'B2_TYP', 'B2_NAME', 'B2_PARAM', array(), 'B2_VERB'),
+        array('B3', 'B3_TYP', 'B3_NAME', 'B3_PARAM', array('<span class="sm-mono">' . ew_e($ew_bs_adr . '?status=1' . ($ew_bs_tok !== '' ? '&' . $ew_bs_tok : '')) . '</span>', $ew_bs_ms), 'B3_VERB'),
+        array('B4', 'T_BEFEHL', 'B4_NAME', 'P_BEFEHL', $ew_bs_feld('OK'), 'V_UNTER_B3'),
+        array('B5', 'T_BEFEHL', 'B5_NAME', 'P_BEFEHL', $ew_bs_feld('QUELLE'), 'V_UNTER_B3'),
+        array('B6', 'T_BEFEHL', 'B6_NAME', 'P_BEFEHL', $ew_bs_feld('WECHSEL'), 'V_UNTER_B3'),
+        array('B7', 'T_BEFEHL', 'B7_NAME', 'P_BEFEHL', $ew_bs_feld('ALTER'), 'V_UNTER_B3'),
+        array('B8', 'B8_TYP', 'B8_NAME', 'B8_PARAM', array(), 'B8_VERB'),
+        array('B9', 'B9_TYP', 'B9_NAME', 'B9_PARAM', array(), 'B9_VERB'),
+        array('B10', 'B10_TYP', 'B10_NAME', 'B10_PARAM', array(), 'B10_VERB'),
+        array('B11', 'B11_TYP', 'B11_NAME', 'B11_PARAM', array(), 'B11_VERB'),
+        array('B12', 'B12_TYP', 'B12_NAME', 'B12_PARAM', array(), 'B12_VERB'),
+        array('B13', 'B13_TYP', 'B13_NAME', 'B13_PARAM', array(), 'B13_VERB'),
+        array('B14', 'B14_TYP', 'B14_NAME', 'B14_PARAM', array(), 'B14_VERB'),
+        array('B15', 'B15_TYP', 'B15_NAME', 'B15_PARAM', array(), 'B15_VERB'),
+        array('B16', 'B16_TYP', 'B16_NAME', 'B16_PARAM', array(), 'B16_VERB'),
+        array('B17', 'B17_TYP', 'B17_NAME', 'B17_PARAM', array(), 'B17_VERB'),
+        array('B18', 'B18_TYP', 'B18_NAME', 'B18_PARAM', array(), 'B18_VERB'),
+        array('B19', 'B19_TYP', 'B19_NAME', 'B19_PARAM', array(), 'B19_VERB'),
+        array('B20', 'B20_TYP', 'B20_NAME', 'B20_PARAM', array(), 'B20_VERB'),
+        array('B21', 'B21_TYP', 'B21_NAME', 'B21_PARAM', array(), 'B21_VERB'),
+        array('B22', 'B22_TYP', 'B22_NAME', 'B22_PARAM', array(), 'B22_VERB'),
+        array('B23', 'B23_TYP', 'B23_NAME', 'B23_PARAM', array(), 'B23_VERB'),
+        array('B24', 'B24_TYP', 'B24_NAME', 'B24_PARAM', array(), 'B24_VERB'),
+        array('B25', 'B25_TYP', 'B25_NAME', 'B25_PARAM', array(), 'B25_VERB'),
+    )),
+    array('kopf' => 'SEITE2_H', 'seite' => 'Ecowitt-Weiche Wetterwerte', 'bild' => 'einbindung_loxone_wetterwerte.png',
+          'schritte' => array('S2_1', 'S2_2', 'S2_3', 'S2_4', 'S2_5', 'S2_6'),
+          'hinweise' => array('N2_1', 'N2_2', 'N2_3'),
+          'zeilen' => array(
+        array('W1', 'T_WBEFEHL', 'W1_NAME', 'W1_PARAM', array(), 'V_LEER'),
+        array('W2', 'T_WBEFEHL', 'W2_NAME', 'W2_PARAM', array(), 'V_LEER'),
+        array('W3', 'T_WBEFEHL', 'W3_NAME', 'W3_PARAM', array(), 'V_LEER'),
+        array('W4', 'T_WBEFEHL', 'W4_NAME', 'W4_PARAM', array(), 'V_LEER'),
+        array('W5', 'T_WBEFEHL', 'W5_NAME', 'W5_PARAM', array(), 'V_LEER'),
+        array('W6', 'T_WBEFEHL', 'W6_NAME', 'W6_PARAM', array(), 'V_LEER'),
+        array('W7', 'T_WBEFEHL', 'W7_NAME', 'W7_PARAM', array(), 'V_LEER'),
+        array('W8', 'T_WBEFEHL', 'W8_NAME', 'W8_PARAM', array(), 'V_LEER'),
+        array('W9', 'T_WBEFEHL', 'W9_NAME', 'W9_PARAM', array(), 'V_LEER'),
+        array('W10', 'T_WBEFEHL', 'W10_NAME', 'W10_PARAM', array(), 'V_LEER'),
+        array('W11', 'T_WBEFEHL', 'W11_NAME', 'W11_PARAM', array(), 'V_LEER'),
+        array('W12', 'T_WBEFEHL', 'W12_NAME', 'W12_PARAM', array(), 'V_LEER'),
+        array('W13', 'T_WBEFEHL', 'W13_NAME', 'W13_PARAM', array(), 'V_LEER'),
+        array('W14', 'T_WBEFEHL', 'W14_NAME', 'W14_PARAM', array(), 'V_LEER'),
+        array('W15', 'T_WBEFEHL', 'W15_NAME', 'W15_PARAM', array(), 'V_LEER'),
+        array('W16', 'T_WBEFEHL', 'W16_NAME', 'W16_PARAM', array(), 'V_LEER'),
+        array('W17', 'T_WBEFEHL', 'W17_NAME', 'W17_PARAM', array(), 'V_LEER'),
+        array('W18', 'T_WBEFEHL', 'W18_NAME', 'W18_PARAM', array(), 'V_LEER'),
+        array('W19', 'T_WBEFEHL', 'W19_NAME', 'W19_PARAM', array(), 'V_LEER'),
+        array('W20', 'T_WBEFEHL', 'W20_NAME', 'W20_PARAM', array(), 'V_LEER'),
+        array('W21', 'T_WBEFEHL', 'W21_NAME', 'W21_PARAM', array(), 'V_LEER'),
+        array('W22', 'W22_TYP', 'W22_NAME', 'W22_PARAM', array(), 'W22_VERB'),
+        array('W23', 'W23_TYP', 'W23_NAME', 'W23_PARAM', array(), 'W23_VERB'),
+        array('W24', 'W24_TYP', 'W24_NAME', 'W24_PARAM', array(), 'W24_VERB'),
+        array('W25', 'W25_TYP', 'W25_NAME', 'W25_PARAM', array(), 'W25_VERB'),
+        array('W26', 'W26_TYP', 'W26_NAME', 'W26_PARAM', array(), 'W26_VERB'),
+        array('W27', 'W27_TYP', 'W27_NAME', 'W27_PARAM', array(), 'W27_VERB'),
+        array('W28', 'W28_TYP', 'W28_NAME', 'W28_PARAM', array(), 'W28_VERB'),
+        array('W29', 'W29_TYP', 'W29_NAME', 'W29_PARAM', array(), 'W29_VERB'),
+        array('W30', 'W30_TYP', 'W30_NAME', 'W30_PARAM', array(), 'W30_VERB'),
+        array('W31', 'W31_TYP', 'W31_NAME', 'W31_PARAM', array(), 'W31_VERB'),
+    )),
 );
 $ew_bs_nr = array();
-foreach ($ew_bs as $ew_i => $ew_z) { $ew_bs_nr[$ew_z[0]] = $ew_i + 1; }
+foreach ($ew_bs_seiten as $ew_s) {
+    foreach ($ew_s['zeilen'] as $ew_i => $ew_z) { $ew_bs_nr[$ew_z[0]] = $ew_i + 1; }
+}
 $ew_bs_t = function ($schluessel) use ($ew_bs_nr) {
-    return preg_replace_callback('/\{(B\d+)\}/', function ($m) use ($ew_bs_nr) {
+    return preg_replace_callback('/\{([BW]\d+)\}/', function ($m) use ($ew_bs_nr) {
         return isset($ew_bs_nr[$m[1]]) ? '#' . $ew_bs_nr[$m[1]] : $m[0];
     }, (string) ew_t('BAUSTEIN.' . $schluessel));
 }; ?>
-<div class="sm-step"><b><?php echo ew_t('BAUSTEIN.H'); ?></b><br><br>
-<?php echo ew_t('BAUSTEIN.TEXT'); ?>
+<h3><?php echo ew_t('BAUSTEIN.H'); ?></h3>
+<p class="sm-hilfe"><?php echo $ew_bs_t('TEXT'); ?></p>
+<?php foreach ($ew_bs_seiten as $ew_s) { ?>
+<h4 class="sm-h4"><?= ew_e(ew_t('BAUSTEIN.' . $ew_s['kopf'])) ?></h4>
+<div class="sm-hinweis"><b><?= ew_e(ew_t('BAUSTEIN.SCHRITTE_TITEL')) ?></b>
+<ol class="sm-schritte">
+<?php foreach ($ew_s['schritte'] as $ew_x) { ?>
+<li><?php echo $ew_bs_t($ew_x); ?></li>
+<?php } ?>
+</ol></div>
+<div class="sm-breit">
 <table class="sm-tbl">
   <tr><th>#</th><th><?php echo ew_t('BAUSTEIN.T_TYP'); ?></th><th><?php echo ew_t('BAUSTEIN.T_NAME'); ?></th><th><?php echo ew_t('BAUSTEIN.T_PARAM'); ?></th><th><?php echo ew_t('BAUSTEIN.T_VERB'); ?></th></tr>
-<?php foreach ($ew_bs as $ew_i => $ew_z) {
+<?php foreach ($ew_s['zeilen'] as $ew_i => $ew_z) {
     $ew_p = $ew_bs_t($ew_z[3]);
     if ($ew_z[4]) { $ew_p = vsprintf($ew_p, $ew_z[4]); } ?>
   <tr><td><?= $ew_i + 1 ?></td><td><?php echo $ew_bs_t($ew_z[1]); ?></td><td><span class="sm-mono"><?php echo $ew_bs_t($ew_z[2]); ?></span></td><td><?php echo $ew_p; ?></td><td><?php echo $ew_bs_t($ew_z[5]); ?></td></tr>
 <?php } ?>
 </table>
-<div class="sm-hinweis"><?php echo $ew_bs_t('ERLAEUTERUNG'); ?></div>
+</div>
+<div class="sm-warnung"><b><?= ew_e(ew_t('BAUSTEIN.HINWEISE_TITEL')) ?></b>
+<ul class="sm-schritte">
+<?php foreach ($ew_s['hinweise'] as $ew_x) { ?>
+<li><?php echo $ew_bs_t($ew_x); ?></li>
+<?php } ?>
+</ul></div>
 <figure class="sm-bild">
-<img src="einbindung_loxone.png" alt="<?= ew_e(ew_t('BAUSTEIN.BILD_ALT')) ?>" loading="lazy">
-<figcaption><?= ew_e(ew_t('BAUSTEIN.BILD_UNTERSCHRIFT')) ?></figcaption>
+<img src="<?= ew_e($ew_s['bild']) ?>" alt="<?= ew_e(ew_t('BAUSTEIN.BILD_ALT')) ?>" loading="lazy">
+<figcaption><?= ew_e(sprintf(ew_t('BAUSTEIN.BILD_UNTERSCHRIFT'), $ew_s['seite'])) ?></figcaption>
 </figure>
 <p class="sm-hilfe"><?php echo ew_t('BAUSTEIN.MUSTERPROJEKT'); ?></p>
-</div>
+<?php } ?>
 </div>
 
 <!-- ================= Test und Protokoll ================= -->

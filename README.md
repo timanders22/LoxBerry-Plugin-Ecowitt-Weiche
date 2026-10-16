@@ -1,6 +1,6 @@
 # LoxBerry-Plugin „Ecowitt-Weiche"
 
-Version 0.9.23
+Version 0.9.24
 
 Holt die Messwerte einer Ecowitt-Wetterstation über **zwei** Netzwerkschnittstellen
 und reicht die Antwort derjenigen durch, die gerade trägt. In der Loxone-Projektdatei
@@ -14,6 +14,16 @@ Alle Suchtexte bleiben gültig, denn das JSON ist dasselbe.
 * Schaltet nichts, misst nichts, speichert keine Messwerte zwischen.
 * Liefert die Vorlagen für Loxone Config (Zustandsbehälter und Beispiel-Stationsbehälter) und zwei
   Baustein-Listen aus dem gemeinsamen Musterprojekt, je mit Bild und Schritt-für-Schritt-Anleitung.
+
+## Neu in 0.9.24
+
+Textberichtigung in der englischen Oberfläche; das Verhalten der Weiche ist unverändert.
+
+* Der Config-Befehl „Fehlerausgang anzeigen“ heißt auf Englisch jetzt überall „Display Error Output“
+  (amtlicher Begriff des englischen Loxone Config, bisher „Show error output“): Reiter Einbindung in
+  Loxone (#2, Schritt „Seite anlegen“, Abschnitt „Wenn beide Adressen ausfallen“) und Hilfe.
+* Deutsche Texte, Bilder und Vorlagen unverändert.
+* Gerendert unter PHP 7.4, 8.4 und 8.5, nicht am Gerät angesehen.
 
 ## Neu in 0.9.23
 

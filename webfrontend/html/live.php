@@ -16,13 +16,14 @@
  *   "ew_ok":     1                        steht in JEDER Antwort mit Daten
  *
  * ew_ok ist KEIN Ausfallmerker (C10): bei Ausfall kommt 503 ohne Daten, und
- * Loxone behaelt die letzte 1. Fuer den Ausfall zaehlen der Onlinestatus
- * des Behaelters oder OK= aus ?status=1. Das Feld bleibt, damit kein
+ * Loxone behaelt die letzte 1. Fuer den Ausfall zaehlen der Fehlerausgang
+ * der Aussentemperatur (in Loxone am Befehl einschalten) oder OK= aus
+ * ?status=1. Das Feld bleibt, damit kein
  * vorhandener Suchtext bricht.
  *
  * FAELLT BEIDES AUS, kommt HTTP 503 OHNE Daten. Das ist Absicht: Loxone
- * behaelt dann seine letzten Werte und schaltet den Onlinestatus des
- * Behaelters ab. Wuerde hier ein zwischengespeicherter Stand geliefert,
+ * behaelt dann seine letzten Werte, und der Fehlerausgang der
+ * Aussentemperatur wird 1. Wuerde hier ein zwischengespeicherter Stand geliefert,
  * rechnete das Haus stundenlang mit alten Zahlen weiter, ohne dass es jemand
  * merkt - und genau diese stille Sorte Fehler soll das Plugin beenden.
  *

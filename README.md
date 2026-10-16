@@ -1,6 +1,6 @@
 # LoxBerry-Plugin „Ecowitt-Weiche"
 
-Version 0.9.22
+Version 0.9.23
 
 Holt die Messwerte einer Ecowitt-Wetterstation über **zwei** Netzwerkschnittstellen
 und reicht die Antwort derjenigen durch, die gerade trägt. In der Loxone-Projektdatei
@@ -14,6 +14,21 @@ Alle Suchtexte bleiben gültig, denn das JSON ist dasselbe.
 * Schaltet nichts, misst nichts, speichert keine Messwerte zwischen.
 * Liefert die Vorlagen für Loxone Config (Zustandsbehälter und Beispiel-Stationsbehälter) und zwei
   Baustein-Listen aus dem gemeinsamen Musterprojekt, je mit Bild und Schritt-für-Schritt-Anleitung.
+
+## Neu in 0.9.23
+
+Textberichtigungen; das Verhalten der Weiche ist unverändert.
+
+* **Einbindungstabelle (Seite „Ecowitt-Weiche“) nach der Liste des Musterprojekts:** #1 nennt den
+  Abfragezyklus 60 s, #2 Einheit und Statistik; #12 heißt „Benachrichtigung“ (nicht mehr „optional“)
+  und trägt den fertigen Meldungstext. Passend zu #1 nennen Hilfe, Hinweis unter der Adresse und
+  Schritt 3 „Einrichten“ jetzt die Abfragezeit 60 s wie im Musterprojekt (bisher „bleibt, wie sie war“).
+* **Fehlerausgang statt Onlinestatus:** Loxone Config 17 zeigt den Onlinestatus eines HTTP-Behälters
+  nicht im Baum. Der Abschnitt „Wenn beide Adressen ausfallen“ im Reiter Einbindung in Loxone, die Hilfe
+  und diese README nennen deshalb den Fehlerausgang der Außentemperatur: am Befehl „Fehlerausgang
+  anzeigen“ einschalten; der Ausgang wird 1, solange der Behälter keinen gültigen Wert bekommt.
+* Intern: `ew_lib.php` wieder reines ASCII (Umlaute, ° und ² als `\u{…}`); Vorlagen bytegleich.
+* Gerendert unter PHP 7.4, 8.4 und 8.5, nicht am Gerät angesehen.
 
 ## Neu in 0.9.22
 
@@ -109,7 +124,7 @@ und liefert das JSON der Station unverändert, ergänzt um zwei Felder ganz vorn
 | Feld | Bedeutung |
 | --- | --- |
 | `ew_quelle` | `primaer` oder `ersatz` — welche Schnittstelle getragen hat |
-| `ew_ok` | 1, wenn Daten kommen. **Kein Ausfallmerker:** fallen beide Seiten aus, kommt 503 ohne Daten, und Loxone behält die alte 1. Den Ausfall zeigt der Onlinestatus des Behälters bzw. `OK` der Zustandszeile. |
+| `ew_ok` | 1, wenn Daten kommen. **Kein Ausfallmerker:** fallen beide Seiten aus, kommt 503 ohne Daten, und Loxone behält die alte 1. Den Ausfall zeigt der Fehlerausgang der Außentemperatur (am Befehl „Fehlerausgang anzeigen“ einschalten) bzw. `OK` der Zustandszeile. |
 
 Daneben beantwortet `live.php?status=1` in **einer Textzeile** den Zustand der
 Weiche selbst:
@@ -135,8 +150,11 @@ fälschlich taufrisch.
 ## Warum bei totalem Ausfall nichts kommt
 
 Fallen beide Seiten aus, antwortet der Endpunkt mit **HTTP 503 ohne Daten**. Das
-ist Absicht. Loxone behält dann seine letzten Werte und schaltet den Onlinestatus
-des Behälters ab — der Ausfall ist also sichtbar und in der Logik auswertbar.
+ist Absicht. Loxone behält dann seine letzten Werte, und der Fehlerausgang des Befehls
+„Außentemperatur“ wird 1 — der Ausfall ist also sichtbar und in der Logik auswertbar.
+Loxone Config 17 zeigt den Onlinestatus eines HTTP-Behälters nicht im Baum; deshalb am Befehl
+im Eigenschaftsfenster „Fehlerausgang anzeigen“ einschalten. Der Ausgang wird 1, solange der
+Behälter keinen gültigen Wert bekommt.
 
 Würde hier ein zwischengespeicherter Stand geliefert, rechnete das Haus stundenlang
 mit alten Zahlen weiter, ohne dass es jemand merkt. Genau diese stille Sorte
@@ -153,7 +171,7 @@ Fehler soll das Plugin beenden — nicht sie eine Ebene höher wiederholen.
    heißen: die Station antwortet, hat aber den Funk zum Außensensor verloren.
 3. **Reiter Einbindung in Loxone:** die angezeigte Adresse in den **Behälter** des
    virtuellen HTTP-Eingangs übernehmen — den Behälter, nicht die einzelnen
-   Befehle. Die Abfragezeit bleibt, wie sie war. **Den Timeout des Behälters
+   Befehle. Abfragezeit 60 s wie im Musterprojekt. **Den Timeout des Behälters
    auf mindestens die Gesamtfrist plus eine Sekunde stellen** — bei der
    Vorgabe von 3 s Wartezeit also 7000 ms. Loxone nimmt beim Timeout eines
    Behälters höchstens 8000 ms an; deshalb sind höchstens 3 s Wartezeit

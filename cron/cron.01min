@@ -1,0 +1,16 @@
+#!/bin/sh
+# Ecowitt-Weiche - Minutentakt fuer MQTT (seit 0.9.25).
+# Den bin- und den log-Pfad des Plugins setzt der Installer ein.
+# ew_takt.php tut nur etwas, wenn im Reiter MQTT "MQTT aktivieren" angehakt
+# ist; sonst endet es sofort und fragt die Station nicht. Sperre (flock),
+# Schranke gegen den Doppelstart und die Upgrade-Marke stehen in ew_takt().
+#
+# Die Fehlerausgabe geht ins Protokoll, nicht nach /dev/null: LoxBerry ruft
+# jeden Eintrag ohnehin mit '> /dev/null 2>&1' auf (/etc/cron.d/lbdefaults);
+# ohne eigene Umleitung waere ein Abbruch vor der ersten Protokollzeile stumm
+# (Regeln/03, Hausstandard seit MarstekVenus 1.0.17). Ordner und Datei werden
+# vorher angelegt und aufgefrischt - eine Umlenkung zum Anhaengen legt den
+# Ordner nach dem Leeren der Ramdisk nicht an (Regeln/06).
+mkdir -p "REPLACELBPLOGDIR" 2>/dev/null
+touch "REPLACELBPLOGDIR/cron.err" 2>/dev/null
+php "REPLACELBPBINDIR/ew_takt.php" >/dev/null 2>>"REPLACELBPLOGDIR/cron.err"

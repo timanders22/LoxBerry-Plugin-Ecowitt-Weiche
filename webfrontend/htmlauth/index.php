@@ -95,7 +95,7 @@ if ($ew_lb !== '' && is_file($ew_lb . '/libs/phplib/loxberry_system.php')) {
 
 
 /* ---------- Reiter: Positivliste, ids und Leiste gehoeren zusammen -------- */
-$ew_reiter = array('tab-settings', 'tab-loxone', 'tab-test');
+$ew_reiter = array('tab-settings', 'tab-mqtt', 'tab-loxone', 'tab-test');
 $ew_tab = 'tab-settings';
 if (isset($_POST['activetab']) && in_array((string) $_POST['activetab'], $ew_reiter, true)) {
     $ew_tab = (string) $_POST['activetab'];
@@ -258,6 +258,39 @@ if ($ew_post && isset($_POST['token_weg'])) {
         $ew_meldung = ew_t('TEXT.TOKEN_ENTFERNT');
     } else {
         $ew_fehler[] = ew_t('TEXT.SICH_SCHREIBFEHLER');
+    }
+    $ew_cfg = ew_config();
+}
+
+/* ---------------- MQTT speichern (Gruppe 3, 0.9.25) ----------------
+ * Eigenes Formular, eigener Handler (Regeln/07). Abweisen und benennen wie beim
+ * Einstellungsformular: ein unzulaessiges Praefix speichert GAR NICHTS. Danach geht
+ * beim naechsten Minutenlauf der volle Satz hinaus (Merker takt.voll), und die
+ * Abo-Datei fuer Gateway V1 wird auf <praefix>/# nachgezogen (Entwurf 2.3/2.7). */
+if ($ew_post && isset($_POST['mqtt_speichern'])) {
+    $ew_neu = $ew_cfg;
+    $ew_neu['mqtt_ein'] = empty($_POST['mqtt_ein']) ? 0 : 1;
+    $ew_roh = ew_feld('mqtt_praefix');
+    if ($ew_roh === '') {
+        $ew_neu['mqtt_praefix'] = EW_MQTT_PRAEFIX_VORGABE;
+        $ew_hinweise[] = sprintf(ew_t('MQTT.PRAEFIX_VORGABE'), EW_MQTT_PRAEFIX_VORGABE);
+    } elseif (!ew_mqtt_praefix_taugt($ew_roh)) {
+        $ew_fehler[] = array('kopf' => ew_t('TEXT.NICHT_GESPEICHERT'),
+            'punkte' => array(sprintf(ew_t('MQTT.PRAEFIX_UNGUELTIG'), ew_kurz($ew_roh, 60))));
+        $ew_neu = null;
+    } else {
+        $ew_neu['mqtt_praefix'] = $ew_roh;
+    }
+    if ($ew_neu !== null) {
+        if (ew_config_speichern($ew_neu)) {
+            $ew_meldung = ew_t('MQTT.GESPEICHERT');
+            ew_takt_voll_merken();
+            if (!ew_abo_schreiben($ew_neu)) {
+                $ew_hinweise[] = ew_t('MQTT.ABO_NICHT_GESCHRIEBEN');
+            }
+        } else {
+            $ew_fehler[] = ew_t('TEXT.SICH_SCHREIBFEHLER');
+        }
     }
     $ew_cfg = ew_config();
 }
@@ -517,6 +550,12 @@ if ($ew_rahmen) {
     padding-top: 10px; border-top: 1px solid #e0e0e0; }
 .sm-schritte { margin: 6px 0 0 18px; padding: 0; }
 .sm-schritte li { margin: 3px 0; }
+/* Gruppe 3 (0.9.25): Kopierknopf der Namenstabelle und zugeklappter Abschnitt "Bestehende Anlagen"
+   (wie Bewaesserung 0.9.44). */
+.sm-wrap button.sm-kopier { font-size: 0.8em; padding: 1px 6px; margin-left: 4px; border: 1px solid #ccc;
+    border-radius: 4px; background: #f5f5f5; color: #333; cursor: pointer; }
+.sm-wrap details { margin: 16px 0; }
+.sm-wrap details > summary { cursor: pointer; font-weight: 600; color: #4f7d17; margin: 6px 0; }
 </style>
 
 <div class="sm-wrap">
@@ -541,7 +580,18 @@ $ew_k_ts = isset($ew_stand['ts']) ? (int) $ew_stand['ts'] : 0;
 $ew_k_q = isset($ew_stand['quelle']) ? (string) $ew_stand['quelle'] : ''; ?>
 <table class="sm-tbl" style="max-width:620px">
 <tr><th><?php echo ew_t('TEXT.KOPF_EIGENSCHAFT'); ?></th><th><?php echo ew_t('TEXT.KOPF_WERT'); ?></th></tr>
-<tr><td><?php echo ew_t('TEXT.KOPF_DIENST'); ?></td><td><?php echo ew_t('TEXT.KOPF_OHNE_DIENST'); ?></td></tr>
+<?php /* Gruppe 3 (0.9.25): die Zeile "Dienst" nennt den Minutentakt (MQTT) und seinen letzten Lauf aus
+         takt.json; ohne MQTT bleibt es beim Abruf durch den Miniserver. */
+$ew_k_takt = ew_takt_lesen();
+$ew_k_tts = isset($ew_k_takt['ts']) ? (int) $ew_k_takt['ts'] : 0; ?>
+<tr><td><?php echo ew_t('TEXT.KOPF_DIENST'); ?></td><td><?php
+if (empty($ew_cfg['mqtt_ein'])) {
+    echo ew_t('TEXT.KOPF_OHNE_DIENST');
+} elseif ($ew_k_tts > 0) {
+    echo ew_e(sprintf(ew_t('TEXT.KOPF_TAKT'), ew_alter_text(time() - $ew_k_tts)));
+} else {
+    echo ew_e(ew_t('TEXT.KOPF_TAKT_NIE'));
+} ?></td></tr>
 <tr><td><?php echo ew_t('TEXT.TRAEGT_GERADE'); ?></td>
 <?php if (empty($ew_stand)) { ?>
   <td><?php echo ew_t('TEXT.KOPF_NOCH_KEIN_ABRUF'); ?></td>
@@ -567,6 +617,8 @@ $ew_k_q = isset($ew_stand['quelle']) ? (string) $ew_stand['quelle'] : ''; ?>
 <div class="sm-tabs">
   <a class="sm-tab<?= $ew_tab === 'tab-settings' ? ' sm-active' : '' ?>" data-ziel="tab-settings"
      href="index.php?form=settings"><?php echo ew_t('REITER.EINSTELLUNGEN'); ?></a>
+  <a class="sm-tab<?= $ew_tab === 'tab-mqtt' ? ' sm-active' : '' ?>" data-ziel="tab-mqtt"
+     href="index.php?form=mqtt"><?php echo ew_t('REITER.MQTT'); ?></a>
   <a class="sm-tab<?= $ew_tab === 'tab-loxone' ? ' sm-active' : '' ?>" data-ziel="tab-loxone"
      href="index.php?form=loxone"><?php echo ew_t('REITER.LOXONE'); ?></a>
   <a class="sm-tab<?= $ew_tab === 'tab-test' ? ' sm-active' : '' ?>" data-ziel="tab-test"
@@ -662,12 +714,359 @@ if (ew_wartezeit_zu_lang($ew_cfg)) { ?>
 </div>
 </div>
 
+<!-- ================= MQTT (Gruppe 3, 0.9.25) ================= -->
+<?php /* Entwurf Gruppe 3 ew, Abschnitt 2.7 (Regeln/07 7: eigenes Formular, eigener Handler): Haken und
+         Praefix; dazu das Gateway laut general.json, die Abo-Datei fuer V1, die Themenliste aus
+         ew_mqtt_namen() und der letzte Lauf des Minutentakts aus takt.json. Die Seite fragt die Station
+         dafuer nicht an. */
+$ew_mq_gw = ew_mqtt_gateway();
+$ew_mq_pf = ew_mqtt_praefix($ew_cfg);
+$ew_mq_takt = ew_takt_lesen();
+list($ew_mq_abo_da, $ew_mq_abo_ok) = ew_abo_pruefen($ew_cfg); ?>
+<div class="sm-seite<?= $ew_tab === 'tab-mqtt' ? ' sm-active' : '' ?>" id="tab-mqtt">
+<h2><?php echo ew_t('MQTT.H'); ?></h2>
+<div class="sm-step"><?php echo ew_t('MQTT.ERKLAERUNG'); ?></div>
+
+<form action="index.php" method="post">
+  <?php echo ew_fmt(); ?>
+<input data-role="none" type="hidden" name="activetab" value="tab-mqtt">
+<div class="sm-feld">
+  <label><input data-role="none" type="checkbox" name="mqtt_ein" value="1"<?= !empty($ew_cfg['mqtt_ein']) ? ' checked' : '' ?>>
+    <?php echo ew_t('MQTT.L_EIN'); ?></label>
+  <p class="sm-hilfe"><?php echo ew_t('MQTT.H_EIN'); ?></p>
+</div>
+<div class="sm-feld">
+  <label><?php echo ew_t('MQTT.L_PRAEFIX'); ?></label>
+  <input data-role="none" type="text" name="mqtt_praefix" value="<?= ew_e(isset($ew_cfg['mqtt_praefix']) ? $ew_cfg['mqtt_praefix'] : EW_MQTT_PRAEFIX_VORGABE) ?>" placeholder="<?= ew_e(EW_MQTT_PRAEFIX_VORGABE) ?>">
+  <p class="sm-hilfe"><?php echo ew_t('MQTT.H_PRAEFIX'); ?></p>
+</div>
+<div class="sm-knopfreihe">
+  <button data-role="none" class="sm-btn sm-b-aktion" type="submit" name="mqtt_speichern" value="1"><?php echo ew_t('MQTT.K_SPEICHERN'); ?></button>
+</div>
+<div class="sm-legende"><span><i class="sm-punkt sm-b-aktion"></i> <?php echo ew_t('LEGENDE.AKTION'); ?></span></div>
+</form>
+
+<h3><?php echo ew_t('MQTT.H_GATEWAY'); ?></h3>
+<table class="sm-tbl" style="max-width:620px">
+<tr><td><?php echo ew_t('MQTT.T_FASSUNG'); ?></td><td><?= $ew_mq_gw['fassung'] > 0 ? 'V' . (int) $ew_mq_gw['fassung'] : ew_e(ew_t('MQTT.FASSUNG_UNBEKANNT')) ?></td></tr>
+<tr><td><?php echo ew_t('MQTT.T_AUTOSTART'); ?></td><td class="<?= $ew_mq_gw['autostart'] ? 'sm-an' : 'sm-aus' ?>"><?php echo ew_t($ew_mq_gw['autostart'] ? 'MQTT.AUTOSTART_EIN' : 'MQTT.AUTOSTART_AUS'); ?></td></tr>
+<tr><td><?php echo ew_t('MQTT.T_UDP'); ?></td><td class="sm-mono"><?= (int) $ew_mq_gw['udpport'] ?></td></tr>
+<tr><td><?php echo ew_t('MQTT.T_ABO'); ?></td><td><?= $ew_mq_abo_ok ? '<span class="sm-an">' . ew_e(sprintf(ew_t('MQTT.ABO_TRAEGT'), $ew_mq_pf . '/#')) . '</span>'
+    : '<span class="sm-aus">' . ew_e(sprintf(ew_t($ew_mq_abo_da ? 'MQTT.ABO_FALSCH' : 'MQTT.ABO_FEHLT'), $ew_mq_pf . '/#')) . '</span>' ?></td></tr>
+</table>
+<?php if (!empty($ew_cfg['mqtt_ein']) && !$ew_mq_gw['autostart']) { ?>
+<div class="sm-warnung"><?php echo ew_t('MQTT.AUTOSTART_WARNUNG'); ?></div>
+<?php } ?>
+<p class="sm-hilfe"><?php echo ew_t('MQTT.ABO_HILFE'); ?></p>
+
+<h3><?php echo ew_t('MQTT.H_LAUF'); ?></h3>
+<?php $ew_mq_ts = isset($ew_mq_takt['ts']) ? (int) $ew_mq_takt['ts'] : 0;
+if (empty($ew_cfg['mqtt_ein'])) { ?>
+<div class="sm-warnung"><?php echo ew_t('MQTT.LAUF_AUS'); ?></div>
+<?php } elseif ($ew_mq_ts <= 0) { ?>
+<div class="sm-warnung"><?php echo ew_t('MQTT.LAUF_NIE'); ?></div>
+<?php } else { ?>
+<div class="sm-hinweis"><?= ew_e(sprintf(ew_t('MQTT.LAUF_TEXT'), date('d.m.Y H:i:s', $ew_mq_ts), ew_alter_text(time() - $ew_mq_ts),
+    isset($ew_mq_takt['zaehler']) ? (int) $ew_mq_takt['zaehler'] : 0, isset($ew_mq_takt['gesendet']) ? (int) $ew_mq_takt['gesendet'] : 0,
+    ew_t(!empty($ew_mq_takt['vollversand']) ? 'MQTT.LAUF_VOLL' : 'MQTT.LAUF_AENDERUNG'),
+    ew_t(!empty($ew_mq_takt['ok']) ? 'MQTT.LAUF_OK' : 'MQTT.LAUF_NICHT_OK'))) ?></div>
+<?php } ?>
+
+<h3><?php echo ew_t('MQTT.H_THEMEN'); ?></h3>
+<p class="sm-hilfe"><?php echo ew_t('MQTT.THEMEN_HILFE'); ?></p>
+<div class="sm-breit">
+<table class="sm-tbl">
+  <tr><th><?php echo ew_t('MQTT.T_THEMA'); ?></th><th><?php echo ew_t('MQTT.T_BEDEUTUNG'); ?></th><th><?php echo ew_t('MQTT.T_KLASSE'); ?></th><th><?php echo ew_t('MQTT.T_RETAIN'); ?></th></tr>
+<?php foreach (ew_mqtt_namen($ew_cfg) as $ew_mq_e) { ?>
+  <tr><td class="sm-mono"><?= ew_e($ew_mq_pf . '/' . $ew_mq_e['thema']) ?></td><td><?php echo ew_t($ew_mq_e['bedeutung']); ?></td>
+      <td><?php echo ew_t('MQTT.KLASSE_' . strtoupper($ew_mq_e['klasse'])); ?></td><td><?php echo ew_t('MQTT.RETAIN_NIE'); ?></td></tr>
+<?php } ?>
+</table>
+</div>
+</div>
+
 <!-- ================= Einbindung in Loxone ================= -->
 <div class="sm-seite<?= $ew_tab === 'tab-loxone' ? ' sm-active' : '' ?>" id="tab-loxone">
 <h2><?php echo ew_t('TEXT.H_LOXONE'); ?></h2>
 
 <div class="sm-step"><?php echo ew_t('TEXT.LOX_ERKLAERUNG'); ?></div>
 
+<?php /* Gruppe 3 / MQTT (0.9.25; Entwurf Gruppe 3 ew 2.8, Nachtrag 2 Gruppe 1): MQTT ist der Weg des
+   Musterprojekts (Schritte 1-6); der bisherige HTTP-Weg steht zugeklappt unter "Bestehende Anlagen", Inhalt
+   unveraendert. Alle Namen aus ew_mqtt_gateway_name(), Namenstabelle und Hakenliste aus ew_mqtt_namen() - derselben
+   Liste, nach der der Minutentakt sendet. Keine MQTT-Importvorlage fuer Werte (R2_078). */
+$ew_eb_gw = ew_mqtt_gateway();
+$ew_eb_pf = ew_mqtt_praefix($ew_cfg);
+$ew_eb_namen = ew_mqtt_namen($ew_cfg);
+list($ew_eb_abo_da, $ew_eb_abo_ok) = ew_abo_pruefen($ew_cfg); ?>
+
+<div class="sm-step" id="eb-mqtt">
+<h3><?php echo ew_t('EINBINDUNG.S1'); ?></h3>
+<p class="sm-hilfe"><?php echo ew_t('EINBINDUNG.S1_TEXT'); ?></p>
+<?php if (!empty($ew_cfg['mqtt_ein'])) { ?>
+<p class="sm-hilfe" id="eb-mqtt-ein"><?= ew_e(sprintf(ew_t('EINBINDUNG.S1_EIN'), $ew_eb_pf)) ?></p>
+<?php } else { ?>
+<div class="sm-fehler" id="eb-mqtt-aus"><?php echo ew_t('EINBINDUNG.S1_AUS'); ?></div>
+<?php } ?>
+</div>
+
+<div class="sm-step" id="eb-gateway">
+<h3><?php echo ew_t('EINBINDUNG.S2'); ?></h3>
+<?php if ($ew_eb_gw['fassung'] < 2) { ?>
+<p class="sm-hilfe" id="eb-v1"><?= sprintf(ew_t($ew_eb_gw['fassung'] === 1 ? 'EINBINDUNG.S2_V1' : 'EINBINDUNG.S2_UNBEKANNT'), '<span class="sm-mono">' . ew_e($ew_eb_pf . '/#') . '</span>') ?></p>
+<?php if (!$ew_eb_abo_ok) { ?>
+<div class="sm-warnung"><?= ew_e(ew_t('MQTT.T_ABO')) ?>: <?= ew_e(sprintf(ew_t($ew_eb_abo_da ? 'MQTT.ABO_FALSCH' : 'MQTT.ABO_FEHLT'), $ew_eb_pf . '/#')) ?></div>
+<?php } ?>
+<?php } ?>
+<?php if ($ew_eb_gw['fassung'] === 0 || $ew_eb_gw['fassung'] >= 2) {
+    $ew_eb_n = array('kern' => 0, 'wahl' => 0, 'batterie' => 0, 'batterie_wahl' => 0);
+    foreach ($ew_eb_namen as $ew_eb_e) {
+        if (isset($ew_eb_n[$ew_eb_e['klasse']])) { $ew_eb_n[$ew_eb_e['klasse']]++; }
+    }
+    $ew_eb_gruppen = array('kern' => sprintf(ew_t('EINBINDUNG.HAKEN_KERN'), $ew_eb_n['kern']),
+                           'wahl' => sprintf(ew_t('EINBINDUNG.HAKEN_WAHL'), $ew_eb_n['wahl']),
+                           'batterie' => sprintf(ew_t('EINBINDUNG.HAKEN_BATTERIE'), $ew_eb_n['batterie']),
+                           'batterie_wahl' => sprintf(ew_t('EINBINDUNG.HAKEN_EC'), $ew_eb_n['batterie_wahl']));
+    $ew_eb_zahl = 0; ?>
+<p class="sm-hilfe" id="eb-v2"><?= sprintf(ew_t('EINBINDUNG.S2_V2'), '<span class="sm-mono">' . ew_e($ew_eb_pf) . '</span>') ?></p>
+<?php foreach ($ew_eb_gruppen as $ew_eb_k => $ew_eb_t) {
+    $ew_eb_h = array();
+    foreach ($ew_eb_namen as $ew_eb_e) {
+        if ($ew_eb_e['klasse'] === $ew_eb_k) { $ew_eb_h[] = $ew_eb_e; }
+    }
+    $ew_eb_zahl += count($ew_eb_h); ?>
+<p class="sm-hilfe"><b><?= ew_e($ew_eb_t) ?></b></p>
+<div class="sm-breit"><table class="sm-tbl" id="eb-haken-<?= ew_e($ew_eb_k) ?>">
+  <tr><th>#</th><th><?php echo ew_t('EINBINDUNG.T_THEMA'); ?></th><th><?php echo ew_t('EINBINDUNG.T_NAME'); ?></th><th><?php echo ew_t('EINBINDUNG.T_SEITE'); ?></th></tr>
+<?php foreach ($ew_eb_h as $ew_eb_i => $ew_eb_e) { ?>
+  <tr><td><?= (int) $ew_eb_i + 1 ?></td><td class="sm-mono"><?= ew_e($ew_eb_pf . '/' . $ew_eb_e['thema']) ?></td><td class="sm-mono"><?= ew_e($ew_eb_e['name']) ?></td>
+      <td><?= $ew_eb_e['seite'] > 0 ? ew_e(ew_t('EINBINDUNG.SEITE' . (int) $ew_eb_e['seite'])) : '&ndash;' ?></td></tr>
+<?php } ?>
+</table></div>
+<?php } ?>
+<p class="sm-hilfe"><?= ew_e(sprintf(ew_t('EINBINDUNG.HAKEN_ZAHL'), $ew_eb_zahl)) ?> <?php echo ew_t('EINBINDUNG.HAKEN_RESET'); ?></p>
+<?php } ?>
+<p class="sm-hilfe" id="eb-reconnect"><?php echo ew_t('EINBINDUNG.RECONNECT'); ?></p>
+<p class="sm-hilfe"><?php echo ew_t('EINBINDUNG.KEINE_BEFEHLE'); ?></p>
+</div>
+
+<?php /* Kopierknopf ohne navigator.clipboard (LoxBerry laeuft ueber http, dort fehlt es): der Name wird in einem
+   Hilfsfeld markiert und mit execCommand kopiert; geht beides nicht, steht danach der Name auf dem Knopf
+   (Form wie Bewaesserung 0.9.44). */ ?>
+<div class="sm-step" id="eb-eingaenge">
+<h3><?php echo ew_t('EINBINDUNG.S3'); ?></h3>
+<p class="sm-hilfe"><?php echo ew_t('EINBINDUNG.S3_TEXT'); ?></p>
+<ul class="sm-hilfe">
+<li><?php echo ew_t('EINBINDUNG.S3_DIGITAL'); ?></li>
+<li><?php echo ew_t('EINBINDUNG.S3_RECHTE'); ?></li>
+<li><?php echo ew_t('EINBINDUNG.S3_MUSTER'); ?></li>
+<li><?php echo ew_t('EINBINDUNG.S3_PRAEFIX'); ?></li>
+<li><?php echo ew_t('EINBINDUNG.S3_EINHEITEN'); ?></li>
+<li><?php echo ew_t('EINBINDUNG.S3_WAHL'); ?></li>
+</ul>
+<div class="sm-breit"><table class="sm-tbl" id="eb-namen">
+  <tr><th><?php echo ew_t('EINBINDUNG.T_NAME'); ?></th><th><?php echo ew_t('EINBINDUNG.T_BEDEUTUNG'); ?></th><th><?php echo ew_t('EINBINDUNG.T_EINHEIT'); ?></th><th><?php echo ew_t('EINBINDUNG.T_FEHLWERT'); ?></th><th><?php echo ew_t('EINBINDUNG.T_ART'); ?></th></tr>
+<?php foreach ($ew_eb_namen as $ew_eb_e) { if ($ew_eb_e['klasse'] === 'weitere') { continue; } ?>
+  <tr><td style="white-space:nowrap"><span class="sm-mono"><?= ew_e($ew_eb_e['name']) ?></span> <button data-role="none" type="button" class="sm-kopier" data-name="<?= ew_e($ew_eb_e['name']) ?>" title="<?= ew_e(ew_t('EINBINDUNG.KOPIEREN')) ?>"><?= ew_e(ew_t('EINBINDUNG.KOPIEREN')) ?></button></td>
+      <td><?php echo ew_t($ew_eb_e['bedeutung']); ?><?php if ($ew_eb_e['klasse'] !== 'kern') { ?> <span class="sm-grau">(<?php echo ew_t('MQTT.KLASSE_' . strtoupper($ew_eb_e['klasse'])); ?>)</span><?php } ?></td>
+      <td class="sm-mono"><?= ew_e($ew_eb_e['einheit']) ?>, Min <?= (int) $ew_eb_e['min'] ?>, Max <?= (int) $ew_eb_e['max'] ?></td>
+      <td><?= $ew_eb_e['fehlwert'] === null ? '&ndash;' : (int) $ew_eb_e['fehlwert'] ?></td>
+      <td><?php echo ew_t('EINBINDUNG.ART_ZAHL'); ?></td></tr>
+<?php } ?>
+</table></div>
+<script>
+(function () {
+  var knoepfe = document.querySelectorAll('#eb-namen button.sm-kopier');
+  for (var i = 0; i < knoepfe.length; i++) {
+    knoepfe[i].addEventListener('click', function () {
+      var f = document.createElement('textarea');
+      f.value = this.getAttribute('data-name');
+      f.setAttribute('readonly', '');
+      f.style.position = 'absolute'; f.style.left = '-9999px';
+      document.body.appendChild(f);
+      f.select();
+      var ok = false;
+      try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+      document.body.removeChild(f);
+      this.textContent = ok ? '\u2713' : this.getAttribute('data-name');
+    });
+  }
+})();
+</script>
+</div>
+
+<div class="sm-step" id="eb-ausfall">
+<h3><?php echo ew_t('EINBINDUNG.S4'); ?></h3>
+<p class="sm-hilfe"><?= sprintf(ew_t('EINBINDUNG.S4_TEXT'), '<span class="sm-mono">' . ew_e(ew_mqtt_gateway_name('status/zaehler', $ew_cfg)) . '</span>',
+    '<span class="sm-mono">' . ew_e(ew_mqtt_gateway_name('status/ok', $ew_cfg)) . '</span>',
+    '<span class="sm-mono">' . ew_e(ew_mqtt_gateway_name('quelle', $ew_cfg)) . '</span>') ?></p>
+</div>
+
+<?php /* Baustein-Listen der drei Musterprojekt-Seiten (Musterprojekt/baustein_listen.txt, Abschnitte
+   "Ecowitt-Weiche" 28, "Ecowitt-Weiche Wetterwerte" 46 und "Ecowitt-Weiche Batterien" 8 Zeilen, wortgleich).
+   Typ, Parameter und Verbindung stehen in [BAUSTEIN] der Sprachdateien; der Name eines Virtuellen Eingangs kommt
+   aus ew_mqtt_gateway_name() (Zeile array(..., 'N:<thema>', ...)), sonst aus [BAUSTEIN] ('K:<schluessel>').
+   {Bn}/{Wn}/{BATn} wird zur laufenden Nummer "#n" der Seite, {N:<thema>} zum Namen des Gateways. Das Bild einer
+   Seite erscheint nur, wenn die Datei im Plugin liegt (das Bild der Seite "Ecowitt-Weiche Batterien" folgt nach
+   dem Anordnen in Config). Zeile: array(Kennung, Typ, Name, Parameter, Verbindung). */
+$ew_bs_seiten = array(
+    array('kopf' => 'SEITE1_H', 'seite' => 'Ecowitt-Weiche', 'bild' => 'einbindung_loxone.png',
+          'schritte' => array('S1_1', 'S1_2', 'S1_3', 'S1_4', 'S1_5', 'S1_6', 'S1_7', 'S1_8', 'S1_9'),
+          'hinweise' => array('ERLAEUTERUNG', 'N1_1', 'N1_2', 'N1_3', 'N1_4', 'N1_5'),
+          'zeilen' => array(
+        array('B1', 'B1_TYP', 'K:B1_NAME', 'B1_PARAM', 'B1_VERB'),
+        array('B2', 'B2_TYP', 'K:B2_NAME', 'B2_PARAM', 'B2_VERB'),
+        array('B3', 'B3_TYP', 'K:B3_NAME', 'B3_PARAM', 'B3_VERB'),
+        array('B4', 'T_VI', 'N:status/ok', 'B4_PARAM', 'B4_VERB'),
+        array('B5', 'T_VI', 'N:quelle', 'B5_PARAM', 'B5_VERB'),
+        array('B6', 'T_VI', 'N:wechsel', 'B6_PARAM', 'B6_VERB'),
+        array('B7', 'B7_TYP', 'K:B7_NAME', 'B7_PARAM', 'B7_VERB'),
+        array('B8', 'B8_TYP', 'K:B8_NAME', 'B8_PARAM', 'B8_VERB'),
+        array('B9', 'B9_TYP', 'K:B9_NAME', 'B9_PARAM', 'B9_VERB'),
+        array('B10', 'B10_TYP', 'K:B10_NAME', 'B10_PARAM', 'B10_VERB'),
+        array('B11', 'B11_TYP', 'K:B11_NAME', 'B11_PARAM', 'B11_VERB'),
+        array('B12', 'B12_TYP', 'K:B12_NAME', 'B12_PARAM', 'B12_VERB'),
+        array('B13', 'B13_TYP', 'K:B13_NAME', 'B13_PARAM', 'B13_VERB'),
+        array('B14', 'B14_TYP', 'K:B14_NAME', 'B14_PARAM', 'B14_VERB'),
+        array('B15', 'B15_TYP', 'K:B15_NAME', 'B15_PARAM', 'B15_VERB'),
+        array('B16', 'B16_TYP', 'K:B16_NAME', 'B16_PARAM', 'B16_VERB'),
+        array('B17', 'B17_TYP', 'K:B17_NAME', 'B17_PARAM', 'B17_VERB'),
+        array('B18', 'B18_TYP', 'K:B18_NAME', 'B18_PARAM', 'B18_VERB'),
+        array('B19', 'B19_TYP', 'K:B19_NAME', 'B19_PARAM', 'B19_VERB'),
+        array('B20', 'B20_TYP', 'K:B20_NAME', 'B20_PARAM', 'B20_VERB'),
+        array('B21', 'B21_TYP', 'K:B21_NAME', 'B21_PARAM', 'B21_VERB'),
+        array('B22', 'B22_TYP', 'K:B22_NAME', 'B22_PARAM', 'B22_VERB'),
+        array('B23', 'B23_TYP', 'K:B23_NAME', 'B23_PARAM', 'B23_VERB'),
+        array('B24', 'B24_TYP', 'K:B24_NAME', 'B24_PARAM', 'B24_VERB'),
+        array('B25', 'B25_TYP', 'K:B25_NAME', 'B25_PARAM', 'B25_VERB'),
+        array('B26', 'T_VI', 'N:status/zaehler', 'B26_PARAM', 'B26_VERB'),
+        array('B27', 'B27_TYP', 'K:B27_NAME', 'B27_PARAM', 'B27_VERB'),
+        array('B28', 'B28_TYP', 'K:B28_NAME', 'B28_PARAM', 'B28_VERB'),
+    )),
+    array('kopf' => 'SEITE2_H', 'seite' => 'Ecowitt-Weiche Wetterwerte', 'bild' => 'einbindung_loxone_wetterwerte.png',
+          'schritte' => array('S2_1', 'S2_2', 'S2_3', 'S2_4', 'S2_5', 'S2_6'),
+          'hinweise' => array('N2_1', 'N2_2', 'N2_3', 'N2_4'),
+          'zeilen' => array(
+        array('W1', 'T_VI', 'N:aussentemperatur', 'W1_PARAM', 'W1_VERB'),
+        array('W2', 'T_VI', 'N:aussenfeuchte', 'W2_PARAM', 'W2_VERB'),
+        array('W3', 'T_VI', 'N:taupunkt', 'W3_PARAM', 'W3_VERB'),
+        array('W4', 'T_VI', 'N:windrichtung', 'W4_PARAM', 'W4_VERB'),
+        array('W5', 'T_VI', 'N:wind', 'W5_PARAM', 'W5_VERB'),
+        array('W6', 'T_VI', 'N:boee', 'W6_PARAM', 'W6_VERB'),
+        array('W7', 'T_VI', 'N:boee_max_heute', 'W7_PARAM', 'W7_VERB'),
+        array('W8', 'T_VI', 'N:solar', 'W8_PARAM', 'W8_VERB'),
+        array('W9', 'T_VI', 'N:uv', 'W9_PARAM', 'W9_VERB'),
+        array('W10', 'T_VI', 'N:regenrate', 'W10_PARAM', 'W10_VERB'),
+        array('W11', 'T_VI', 'N:regen_ereignis', 'W11_PARAM', 'W11_VERB'),
+        array('W12', 'T_VI', 'N:regen_heute', 'W12_PARAM', 'W12_VERB'),
+        array('W13', 'T_VI', 'N:regen_woche', 'W13_PARAM', 'W13_VERB'),
+        array('W14', 'T_VI', 'N:regen_monat', 'W14_PARAM', 'W14_VERB'),
+        array('W15', 'T_VI', 'N:regen_jahr', 'W15_PARAM', 'W15_VERB'),
+        array('W16', 'T_VI', 'N:innentemperatur', 'W16_PARAM', 'W16_VERB'),
+        array('W17', 'T_VI', 'N:innenfeuchte', 'W17_PARAM', 'W17_VERB'),
+        array('W18', 'T_VI', 'N:luftdruck_rel', 'W18_PARAM', 'W18_VERB'),
+        array('W19', 'T_VI', 'N:luftdruck_abs', 'W19_PARAM', 'W19_VERB'),
+        array('W20', 'T_VI', 'N:blitz_entfernung', 'W20_PARAM', 'W20_VERB'),
+        array('W21', 'T_VI', 'N:blitz_anzahl', 'W21_PARAM', 'W21_VERB'),
+        array('W22', 'W22_TYP', 'K:W22_NAME', 'W22_PARAM', 'W22_VERB'),
+        array('W23', 'W23_TYP', 'K:W23_NAME', 'W23_PARAM', 'W23_VERB'),
+        array('W24', 'W24_TYP', 'K:W24_NAME', 'W24_PARAM', 'W24_VERB'),
+        array('W25', 'W25_TYP', 'K:W25_NAME', 'W25_PARAM', 'W25_VERB'),
+        array('W26', 'W26_TYP', 'K:W26_NAME', 'W26_PARAM', 'W26_VERB'),
+        array('W27', 'W27_TYP', 'K:W27_NAME', 'W27_PARAM', 'W27_VERB'),
+        array('W28', 'W28_TYP', 'K:W28_NAME', 'W28_PARAM', 'W28_VERB'),
+        array('W29', 'W29_TYP', 'K:W29_NAME', 'W29_PARAM', 'W29_VERB'),
+        array('W30', 'W30_TYP', 'K:W30_NAME', 'W30_PARAM', 'W30_VERB'),
+        array('W31', 'W31_TYP', 'K:W31_NAME', 'W31_PARAM', 'W31_VERB'),
+        array('W32', 'W32_TYP', 'K:W32_NAME', 'W32_PARAM', 'W32_VERB'),
+        array('W33', 'W33_TYP', 'K:W33_NAME', 'W33_PARAM', 'W33_VERB'),
+        array('W34', 'W34_TYP', 'K:W34_NAME', 'W34_PARAM', 'W34_VERB'),
+        array('W35', 'W35_TYP', 'K:W35_NAME', 'W35_PARAM', 'W35_VERB'),
+        array('W36', 'W36_TYP', 'K:W36_NAME', 'W36_PARAM', 'W36_VERB'),
+        array('W37', 'W37_TYP', 'K:W37_NAME', 'W37_PARAM', 'W37_VERB'),
+        array('W38', 'W38_TYP', 'K:W38_NAME', 'W38_PARAM', 'W38_VERB'),
+        array('W39', 'W39_TYP', 'K:W39_NAME', 'W39_PARAM', 'W39_VERB'),
+        array('W40', 'T_VI', 'N:gefuehlt', 'W40_PARAM', 'W40_VERB'),
+        array('W41', 'T_VI', 'N:vpd', 'W41_PARAM', 'W41_VERB'),
+        array('W42', 'T_VI', 'N:laufzeit', 'W42_PARAM', 'W42_VERB'),
+        array('W43', 'T_VI', 'N:regnet', 'W43_PARAM', 'W43_VERB'),
+        array('W44', 'T_VI', 'N:windrichtung_10min', 'W44_PARAM', 'W44_VERB'),
+        array('W45', 'W45_TYP', 'K:W45_NAME', 'W45_PARAM', 'W45_VERB'),
+        array('W46', 'W46_TYP', 'K:W46_NAME', 'W46_PARAM', 'W46_VERB'),
+    )),
+    array('kopf' => 'SEITE3_H', 'seite' => 'Ecowitt-Weiche Batterien', 'bild' => 'einbindung_loxone_batterien.png',
+          'schritte' => array('S3_1', 'S3_2', 'S3_3'),
+          'hinweise' => array('N3_1', 'N3_2', 'N3_3'),
+          'zeilen' => array(
+        array('BAT1', 'T_VI', 'N:batterie_ws90', 'BAT1_PARAM', 'BAT1_VERB'),
+        array('BAT2', 'T_VI', 'N:spannung_ws90', 'BAT2_PARAM', 'BAT2_VERB'),
+        array('BAT3', 'T_VI', 'N:kondensator_ws90', 'BAT3_PARAM', 'BAT3_VERB'),
+        array('BAT4', 'T_VI', 'N:batterie_wh40', 'BAT4_PARAM', 'BAT4_VERB'),
+        array('BAT5', 'T_VI', 'N:spannung_wh40', 'BAT5_PARAM', 'BAT5_VERB'),
+        array('BAT6', 'T_VI', 'N:batterie_wh57', 'BAT6_PARAM', 'BAT6_VERB'),
+        array('BAT7', 'T_VI', 'N:batterie_wh25', 'BAT7_PARAM', 'BAT7_VERB'),
+        array('BAT8', 'BAT8_TYP', 'K:BAT8_NAME', 'BAT8_PARAM', 'BAT8_VERB'),
+    )),
+);
+$ew_bs_nr = array();
+foreach ($ew_bs_seiten as $ew_s) {
+    foreach ($ew_s['zeilen'] as $ew_i => $ew_z) { $ew_bs_nr[$ew_z[0]] = $ew_i + 1; }
+}
+$ew_bs_cfg = $ew_cfg;
+$ew_bs_t = function ($schluessel) use ($ew_bs_nr, $ew_bs_cfg) {
+    $t = preg_replace_callback('/\{((?:BAT|B|W)\d+)\}/', function ($m) use ($ew_bs_nr) {
+        return isset($ew_bs_nr[$m[1]]) ? '#' . $ew_bs_nr[$m[1]] : $m[0];
+    }, (string) ew_t('BAUSTEIN.' . $schluessel));
+    return preg_replace_callback('#\{N:([a-z0-9_/]+)\}#', function ($m) use ($ew_bs_cfg) {
+        return ew_e(ew_mqtt_gateway_name($m[1], $ew_bs_cfg));
+    }, $t);
+};
+$ew_bs_name = function ($spec) use ($ew_bs_t, $ew_bs_cfg) {
+    return strpos($spec, 'N:') === 0 ? ew_e(ew_mqtt_gateway_name(substr($spec, 2), $ew_bs_cfg)) : $ew_bs_t(substr($spec, 2));
+}; ?>
+<div class="sm-step" id="eb-bausteine">
+<h3><?php echo ew_t('BAUSTEIN.H'); ?></h3>
+<p class="sm-hilfe"><?php echo $ew_bs_t('TEXT'); ?></p>
+</div>
+<?php foreach ($ew_bs_seiten as $ew_s) { ?>
+<h4 class="sm-h4"><?= ew_e(ew_t('BAUSTEIN.' . $ew_s['kopf'])) ?></h4>
+<div class="sm-hinweis"><b><?= ew_e(ew_t('BAUSTEIN.SCHRITTE_TITEL')) ?></b>
+<ol class="sm-schritte">
+<?php foreach ($ew_s['schritte'] as $ew_x) { ?>
+<li><?php echo $ew_bs_t($ew_x); ?></li>
+<?php } ?>
+</ol></div>
+<div class="sm-breit">
+<table class="sm-tbl">
+  <tr><th>#</th><th><?php echo ew_t('BAUSTEIN.T_TYP'); ?></th><th><?php echo ew_t('BAUSTEIN.T_NAME'); ?></th><th><?php echo ew_t('BAUSTEIN.T_PARAM'); ?></th><th><?php echo ew_t('BAUSTEIN.T_VERB'); ?></th></tr>
+<?php foreach ($ew_s['zeilen'] as $ew_i => $ew_z) { ?>
+  <tr><td><?= $ew_i + 1 ?></td><td><?php echo $ew_bs_t($ew_z[1]); ?></td><td><span class="sm-mono"><?php echo $ew_bs_name($ew_z[2]); ?></span></td><td><?php echo $ew_bs_t($ew_z[3]); ?></td><td><?php echo $ew_bs_t($ew_z[4]); ?></td></tr>
+<?php } ?>
+</table>
+</div>
+<div class="sm-warnung"><b><?= ew_e(ew_t('BAUSTEIN.HINWEISE_TITEL')) ?></b>
+<ul class="sm-schritte">
+<?php foreach ($ew_s['hinweise'] as $ew_x) { ?>
+<li><?php echo $ew_bs_t($ew_x); ?></li>
+<?php } ?>
+</ul></div>
+<?php if (is_file(__DIR__ . '/' . $ew_s['bild'])) { ?>
+<figure class="sm-bild">
+<img src="<?= ew_e($ew_s['bild']) ?>" alt="<?= ew_e(ew_t('BAUSTEIN.BILD_ALT')) ?>" loading="lazy">
+<figcaption><?= ew_e(sprintf(ew_t('BAUSTEIN.BILD_UNTERSCHRIFT'), $ew_s['seite'])) ?></figcaption>
+</figure>
+<?php } ?>
+<p class="sm-hilfe"><?php echo ew_t('BAUSTEIN.MUSTERPROJEKT'); ?></p>
+<?php } ?>
+
+<div class="sm-step" id="eb-probe">
+<h3><?php echo ew_t('EINBINDUNG.S6'); ?></h3>
+<p class="sm-hilfe"><?= sprintf(ew_t('EINBINDUNG.S6_TEXT'), '<span class="sm-mono">' . ew_e(ew_mqtt_gateway_name('status/zaehler', $ew_cfg)) . '</span>') ?></p>
+</div>
+
+<details id="eb-http">
+<summary><?php echo ew_t('EINBINDUNG.HTTP_TITEL'); ?></summary>
+<p class="sm-hilfe"><?php echo ew_t('EINBINDUNG.HTTP_TEXT'); ?></p>
 <h3><?php echo ew_t('TEXT.LOX_ADRESSE'); ?></h3>
 <p><span class="sm-mono">http://<?= ew_e($ew_host) ?>/plugins/<?= ew_e($ew_plugin) ?>/live.php<?= ew_e($ew_tokenteil) ?></span></p>
 <p class="sm-hilfe"><?php echo ew_t('TEXT.LOX_ADRESSE_HILFE'); ?></p>
@@ -748,136 +1147,7 @@ if (is_array($ew_proj)) {
 <p class="sm-hilfe"><?php printf(ew_t('TEXT.PROJ_HILFE'), '<span class="sm-mono">' . ew_e(ew_projekt_ordner()) . '</span>'); ?></p>
 <?php } ?>
 <div class="sm-hinweis"><?php echo ew_t('TEXT.LOX_EWOK'); ?></div>
-
-<?php /* X-8 (02.10.2026, Entscheidung 36): Komplette Baustein-Liste. Typ, Name,
-         Parameter und Verbindung stehen in [BAUSTEIN] der Sprachdateien; Adressen,
-         Min/Max und der Timeout kommen aus dem Code (dieselben Quellen wie oben).
-         {Bn}/{Wn} in einem Text wird zur laufenden Nummer "#n" der jeweiligen Seite.
-         Welle Bild 13 (0.9.22; Hausherr 11.10.2026: Vollausstattung, ein absoluter Laie soll das
-         Maximum leicht uebernehmen koennen; Entwurf Welle 13 ew, Entscheidungen wie empfohlen): zwei
-         Seiten aus dem LoxBerry-Plugins Musterprojekt, dort in Loxone Config gebaut und verbunden
-         (Musterprojekt/baustein_listen.txt, Abschnitte "Ecowitt-Weiche" 25 und "Ecowitt-Weiche
-         Wetterwerte" 31 Zeilen, wortgleich). #14/#15 der ersten Seite entfallen (Loxone Config 17
-         zeigt den Onlinestatus des Behaelters nicht im Baum, statt dessen der Fehlerausgang von #2);
-         die Nummern bleiben wie im Musterprojekt. Je Seite: Ueberschrift, Kasten "So uebernehmen Sie
-         diese Seite", Tabelle, Hinweise, Bild, Link - alle immer sichtbar. Bis 0.9.21 stand hier eine
-         Tabelle mit 13 Zeilen.
-         Zeile: array(Kennung, Typ, Name, Parameter, Argumente, Verbindung). */
-$ew_bs_adr = 'http://' . $ew_host . '/plugins/' . $ew_plugin . '/live.php';
-$ew_bs_tok = $ew_cfg['token'] !== '' ? 'token=' . rawurlencode($ew_cfg['token']) : '';
-$ew_bs_ms = ew_behaelter_timeout_ms($ew_cfg);
-$ew_bs_feld = function ($f) use ($ew_lox_felder) {
-    return array((int) $ew_lox_felder[$f][0], (int) $ew_lox_felder[$f][1]);
-};
-$ew_bs_seiten = array(
-    array('kopf' => 'SEITE1_H', 'seite' => 'Ecowitt-Weiche', 'bild' => 'einbindung_loxone.png',
-          'schritte' => array('S1_1', 'S1_2', 'S1_3', 'S1_4', 'S1_5', 'S1_6', 'S1_7', 'S1_8', 'S1_9'),
-          'hinweise' => array('ERLAEUTERUNG', 'N1_1', 'N1_2', 'N1_3', 'N1_4', 'N1_5'),
-          'zeilen' => array(
-        array('B1', 'B1_TYP', 'B1_NAME', 'B1_PARAM', array('<span class="sm-mono">' . ew_e($ew_bs_adr . ($ew_bs_tok !== '' ? '?' . $ew_bs_tok : '')) . '</span>', $ew_bs_ms), 'B1_VERB'),
-        array('B2', 'B2_TYP', 'B2_NAME', 'B2_PARAM', array(), 'B2_VERB'),
-        array('B3', 'B3_TYP', 'B3_NAME', 'B3_PARAM', array('<span class="sm-mono">' . ew_e($ew_bs_adr . '?status=1' . ($ew_bs_tok !== '' ? '&' . $ew_bs_tok : '')) . '</span>', $ew_bs_ms), 'B3_VERB'),
-        array('B4', 'T_BEFEHL', 'B4_NAME', 'P_BEFEHL', $ew_bs_feld('OK'), 'V_UNTER_B3'),
-        array('B5', 'T_BEFEHL', 'B5_NAME', 'P_BEFEHL', $ew_bs_feld('QUELLE'), 'V_UNTER_B3'),
-        array('B6', 'T_BEFEHL', 'B6_NAME', 'P_BEFEHL', $ew_bs_feld('WECHSEL'), 'V_UNTER_B3'),
-        array('B7', 'T_BEFEHL', 'B7_NAME', 'P_BEFEHL', $ew_bs_feld('ALTER'), 'V_UNTER_B3'),
-        array('B8', 'B8_TYP', 'B8_NAME', 'B8_PARAM', array(), 'B8_VERB'),
-        array('B9', 'B9_TYP', 'B9_NAME', 'B9_PARAM', array(), 'B9_VERB'),
-        array('B10', 'B10_TYP', 'B10_NAME', 'B10_PARAM', array(), 'B10_VERB'),
-        array('B11', 'B11_TYP', 'B11_NAME', 'B11_PARAM', array(), 'B11_VERB'),
-        array('B12', 'B12_TYP', 'B12_NAME', 'B12_PARAM', array(), 'B12_VERB'),
-        array('B13', 'B13_TYP', 'B13_NAME', 'B13_PARAM', array(), 'B13_VERB'),
-        array('B14', 'B14_TYP', 'B14_NAME', 'B14_PARAM', array(), 'B14_VERB'),
-        array('B15', 'B15_TYP', 'B15_NAME', 'B15_PARAM', array(), 'B15_VERB'),
-        array('B16', 'B16_TYP', 'B16_NAME', 'B16_PARAM', array(), 'B16_VERB'),
-        array('B17', 'B17_TYP', 'B17_NAME', 'B17_PARAM', array(), 'B17_VERB'),
-        array('B18', 'B18_TYP', 'B18_NAME', 'B18_PARAM', array(), 'B18_VERB'),
-        array('B19', 'B19_TYP', 'B19_NAME', 'B19_PARAM', array(), 'B19_VERB'),
-        array('B20', 'B20_TYP', 'B20_NAME', 'B20_PARAM', array(), 'B20_VERB'),
-        array('B21', 'B21_TYP', 'B21_NAME', 'B21_PARAM', array(), 'B21_VERB'),
-        array('B22', 'B22_TYP', 'B22_NAME', 'B22_PARAM', array(), 'B22_VERB'),
-        array('B23', 'B23_TYP', 'B23_NAME', 'B23_PARAM', array(), 'B23_VERB'),
-        array('B24', 'B24_TYP', 'B24_NAME', 'B24_PARAM', array(), 'B24_VERB'),
-        array('B25', 'B25_TYP', 'B25_NAME', 'B25_PARAM', array(), 'B25_VERB'),
-    )),
-    array('kopf' => 'SEITE2_H', 'seite' => 'Ecowitt-Weiche Wetterwerte', 'bild' => 'einbindung_loxone_wetterwerte.png',
-          'schritte' => array('S2_1', 'S2_2', 'S2_3', 'S2_4', 'S2_5', 'S2_6'),
-          'hinweise' => array('N2_1', 'N2_2', 'N2_3'),
-          'zeilen' => array(
-        array('W1', 'T_WBEFEHL', 'W1_NAME', 'W1_PARAM', array(), 'V_LEER'),
-        array('W2', 'T_WBEFEHL', 'W2_NAME', 'W2_PARAM', array(), 'V_LEER'),
-        array('W3', 'T_WBEFEHL', 'W3_NAME', 'W3_PARAM', array(), 'V_LEER'),
-        array('W4', 'T_WBEFEHL', 'W4_NAME', 'W4_PARAM', array(), 'V_LEER'),
-        array('W5', 'T_WBEFEHL', 'W5_NAME', 'W5_PARAM', array(), 'V_LEER'),
-        array('W6', 'T_WBEFEHL', 'W6_NAME', 'W6_PARAM', array(), 'V_LEER'),
-        array('W7', 'T_WBEFEHL', 'W7_NAME', 'W7_PARAM', array(), 'V_LEER'),
-        array('W8', 'T_WBEFEHL', 'W8_NAME', 'W8_PARAM', array(), 'V_LEER'),
-        array('W9', 'T_WBEFEHL', 'W9_NAME', 'W9_PARAM', array(), 'V_LEER'),
-        array('W10', 'T_WBEFEHL', 'W10_NAME', 'W10_PARAM', array(), 'V_LEER'),
-        array('W11', 'T_WBEFEHL', 'W11_NAME', 'W11_PARAM', array(), 'V_LEER'),
-        array('W12', 'T_WBEFEHL', 'W12_NAME', 'W12_PARAM', array(), 'V_LEER'),
-        array('W13', 'T_WBEFEHL', 'W13_NAME', 'W13_PARAM', array(), 'V_LEER'),
-        array('W14', 'T_WBEFEHL', 'W14_NAME', 'W14_PARAM', array(), 'V_LEER'),
-        array('W15', 'T_WBEFEHL', 'W15_NAME', 'W15_PARAM', array(), 'V_LEER'),
-        array('W16', 'T_WBEFEHL', 'W16_NAME', 'W16_PARAM', array(), 'V_LEER'),
-        array('W17', 'T_WBEFEHL', 'W17_NAME', 'W17_PARAM', array(), 'V_LEER'),
-        array('W18', 'T_WBEFEHL', 'W18_NAME', 'W18_PARAM', array(), 'V_LEER'),
-        array('W19', 'T_WBEFEHL', 'W19_NAME', 'W19_PARAM', array(), 'V_LEER'),
-        array('W20', 'T_WBEFEHL', 'W20_NAME', 'W20_PARAM', array(), 'V_LEER'),
-        array('W21', 'T_WBEFEHL', 'W21_NAME', 'W21_PARAM', array(), 'V_LEER'),
-        array('W22', 'W22_TYP', 'W22_NAME', 'W22_PARAM', array(), 'W22_VERB'),
-        array('W23', 'W23_TYP', 'W23_NAME', 'W23_PARAM', array(), 'W23_VERB'),
-        array('W24', 'W24_TYP', 'W24_NAME', 'W24_PARAM', array(), 'W24_VERB'),
-        array('W25', 'W25_TYP', 'W25_NAME', 'W25_PARAM', array(), 'W25_VERB'),
-        array('W26', 'W26_TYP', 'W26_NAME', 'W26_PARAM', array(), 'W26_VERB'),
-        array('W27', 'W27_TYP', 'W27_NAME', 'W27_PARAM', array(), 'W27_VERB'),
-        array('W28', 'W28_TYP', 'W28_NAME', 'W28_PARAM', array(), 'W28_VERB'),
-        array('W29', 'W29_TYP', 'W29_NAME', 'W29_PARAM', array(), 'W29_VERB'),
-        array('W30', 'W30_TYP', 'W30_NAME', 'W30_PARAM', array(), 'W30_VERB'),
-        array('W31', 'W31_TYP', 'W31_NAME', 'W31_PARAM', array(), 'W31_VERB'),
-    )),
-);
-$ew_bs_nr = array();
-foreach ($ew_bs_seiten as $ew_s) {
-    foreach ($ew_s['zeilen'] as $ew_i => $ew_z) { $ew_bs_nr[$ew_z[0]] = $ew_i + 1; }
-}
-$ew_bs_t = function ($schluessel) use ($ew_bs_nr) {
-    return preg_replace_callback('/\{([BW]\d+)\}/', function ($m) use ($ew_bs_nr) {
-        return isset($ew_bs_nr[$m[1]]) ? '#' . $ew_bs_nr[$m[1]] : $m[0];
-    }, (string) ew_t('BAUSTEIN.' . $schluessel));
-}; ?>
-<h3><?php echo ew_t('BAUSTEIN.H'); ?></h3>
-<p class="sm-hilfe"><?php echo $ew_bs_t('TEXT'); ?></p>
-<?php foreach ($ew_bs_seiten as $ew_s) { ?>
-<h4 class="sm-h4"><?= ew_e(ew_t('BAUSTEIN.' . $ew_s['kopf'])) ?></h4>
-<div class="sm-hinweis"><b><?= ew_e(ew_t('BAUSTEIN.SCHRITTE_TITEL')) ?></b>
-<ol class="sm-schritte">
-<?php foreach ($ew_s['schritte'] as $ew_x) { ?>
-<li><?php echo $ew_bs_t($ew_x); ?></li>
-<?php } ?>
-</ol></div>
-<div class="sm-breit">
-<table class="sm-tbl">
-  <tr><th>#</th><th><?php echo ew_t('BAUSTEIN.T_TYP'); ?></th><th><?php echo ew_t('BAUSTEIN.T_NAME'); ?></th><th><?php echo ew_t('BAUSTEIN.T_PARAM'); ?></th><th><?php echo ew_t('BAUSTEIN.T_VERB'); ?></th></tr>
-<?php foreach ($ew_s['zeilen'] as $ew_i => $ew_z) {
-    $ew_p = $ew_bs_t($ew_z[3]);
-    if ($ew_z[4]) { $ew_p = vsprintf($ew_p, $ew_z[4]); } ?>
-  <tr><td><?= $ew_i + 1 ?></td><td><?php echo $ew_bs_t($ew_z[1]); ?></td><td><span class="sm-mono"><?php echo $ew_bs_t($ew_z[2]); ?></span></td><td><?php echo $ew_p; ?></td><td><?php echo $ew_bs_t($ew_z[5]); ?></td></tr>
-<?php } ?>
-</table>
-</div>
-<div class="sm-warnung"><b><?= ew_e(ew_t('BAUSTEIN.HINWEISE_TITEL')) ?></b>
-<ul class="sm-schritte">
-<?php foreach ($ew_s['hinweise'] as $ew_x) { ?>
-<li><?php echo $ew_bs_t($ew_x); ?></li>
-<?php } ?>
-</ul></div>
-<figure class="sm-bild">
-<img src="<?= ew_e($ew_s['bild']) ?>" alt="<?= ew_e(ew_t('BAUSTEIN.BILD_ALT')) ?>" loading="lazy">
-<figcaption><?= ew_e(sprintf(ew_t('BAUSTEIN.BILD_UNTERSCHRIFT'), $ew_s['seite'])) ?></figcaption>
-</figure>
-<p class="sm-hilfe"><?php echo ew_t('BAUSTEIN.MUSTERPROJEKT'); ?></p>
-<?php } ?>
+</details>
 </div>
 
 <!-- ================= Test und Protokoll ================= -->
@@ -931,6 +1201,17 @@ $ew_bs_t = function ($schluessel) use ($ew_bs_nr) {
 </div>
 <p class="sm-hilfe"><?php echo ew_t('TEXT.PROBE_HILFE'); ?></p>
 <?php } ?>
+
+<?php /* Gruppe 3 (0.9.25, Entwurf 12.3): welche Zusatz- und Batteriefelder die Station liefert - aus dem letzten
+         Lauf des Minutentakts (takt.json), nicht aus einer eigenen Abfrage. */
+$ew_tf = ew_takt_lesen(); ?>
+<div class="sm-hinweis"><?php
+if (empty($ew_tf['ts'])) {
+    echo ew_t('TEST.FELDER_UNBEKANNT');
+} else {
+    echo ew_e(sprintf(ew_t('TEST.FELDER'), (isset($ew_tf['felder']) && is_array($ew_tf['felder']) && $ew_tf['felder'])
+        ? implode(', ', array_map('strval', $ew_tf['felder'])) : ew_t('TEST.FELDER_KEINE')));
+} ?></div>
 
 <h3><?php echo ew_t('TEXT.H_SELBST'); ?></h3>
 <?php
@@ -998,6 +1279,18 @@ $ew_selbst[] = array('was' => ew_t('TEXT.S_BEHAELTER'), 'lage' => $ew_r[0], 'wie
 $ew_selbst[] = array('was' => ew_t('TEXT.S_WARTEZEIT'), 'lage' => ew_wartezeit_zu_lang($ew_cfg) ? 'fehl' : 'ok',
     'wie' => sprintf(ew_t(ew_wartezeit_zu_lang($ew_cfg) ? 'TEST.WARTEZEIT_FEHL' : 'TEST.WARTEZEIT_OK'),
         (int) $ew_cfg['timeout'], ew_behaelter_timeout_noetig_ms($ew_cfg), EW_LOX_TIMEOUT_MAX, EW_WARTEZEIT_MAX));
+
+/* Gruppe 3 (0.9.25, Entwurf 2.9): Minutentakt und MQTT. */
+$ew_r = ew_pruef_mqtt_takt($ew_cfg);
+$ew_selbst[] = array('was' => ew_t('TEXT.S_MQTT_TAKT'), 'lage' => $ew_r[0], 'wie' => $ew_r[1]);
+$ew_r = ew_pruef_mqtt_namen($ew_cfg);
+$ew_selbst[] = array('was' => ew_t('TEXT.S_MQTT_NAMEN'), 'lage' => $ew_r[0], 'wie' => $ew_r[1]);
+$ew_r = ew_pruef_mqtt_http();
+$ew_selbst[] = array('was' => ew_t('TEXT.S_MQTT_HTTP'), 'lage' => $ew_r[0], 'wie' => $ew_r[1]);
+$ew_r = ew_pruef_mqtt_abo($ew_cfg);
+$ew_selbst[] = array('was' => ew_t('TEXT.S_MQTT_ABO'), 'lage' => $ew_r[0], 'wie' => $ew_r[1]);
+$ew_r = ew_pruef_mqtt_einheiten();
+$ew_selbst[] = array('was' => ew_t('TEXT.S_MQTT_EINHEIT'), 'lage' => $ew_r[0], 'wie' => $ew_r[1]);
 
 $ew_cfgdatei = ew_paths()['cfgdatei'];
 $ew_schreib = is_writable(is_file($ew_cfgdatei) ? $ew_cfgdatei : dirname($ew_cfgdatei));

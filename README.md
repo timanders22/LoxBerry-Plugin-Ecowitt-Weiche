@@ -1,19 +1,51 @@
 # LoxBerry-Plugin „Ecowitt-Weiche"
 
-Version 0.9.24
+Version 0.9.25
 
 Holt die Messwerte einer Ecowitt-Wetterstation über **zwei** Netzwerkschnittstellen
 und reicht die Antwort derjenigen durch, die gerade trägt. In der Loxone-Projektdatei
 ändert sich dafür genau **eine** Stelle: die Adresse des virtuellen HTTP-Eingangs.
-Alle Suchtexte bleiben gültig, denn das JSON ist dasselbe.
+Alle Suchtexte bleiben gültig, denn das JSON ist dasselbe. Seit 0.9.25 sendet das Plugin die
+Werte auf Wunsch auch jede Minute über MQTT in Virtuelle Eingänge – der Weg des Musterprojekts.
 
 * Fragt zuerst die erste Adresse, bei unbrauchbarer Antwort die Ausweichadresse.
 * Beurteilt den **Inhalt**, nicht nur die Erreichbarkeit.
 * Reicht die Stationsantwort **wortgetreu** durch und stellt nur zwei eigene Felder voran.
 * Fallen beide Seiten aus, kommt HTTP 503 **ohne** Daten — der Ausfall bleibt sichtbar.
 * Schaltet nichts, misst nichts, speichert keine Messwerte zwischen.
-* Liefert die Vorlagen für Loxone Config (Zustandsbehälter und Beispiel-Stationsbehälter) und zwei
+* Liefert die Vorlagen für Loxone Config (Zustandsbehälter und Beispiel-Stationsbehälter) und drei
   Baustein-Listen aus dem gemeinsamen Musterprojekt, je mit Bild und Schritt-für-Schritt-Anleitung.
+
+## Neu in 0.9.25
+
+Die Weiche bekommt MQTT (Entscheidung des Hausherrn 19.10.2026). Der Weg über HTTP bleibt unverändert.
+
+* **Minutentakt mit MQTT:** Mit „MQTT aktivieren“ (neuer Reiter MQTT) fragt das Plugin die Station jede
+  Minute über dieselbe Weiche wie `live.php` und sendet die Werte als Zahlen an den UDP-Eingang des
+  MQTT-Gateways: Präfix `ecowittweiche`, nie retained, nie die Rohzeile der Station – der Stationsschlüssel
+  kann so in kein Thema geraten. Das Lebenszeichen (`status/ok`, `status/ts`, `status/zaehler`) geht jede
+  Minute hinaus, die übrigen Themen bei Änderung und alle fünf Minuten vollständig. `cron/cron.01min` ruft
+  `bin/ew_takt.php`, mit Sperre, Schranke gegen den Doppelstart und Upgrade-Marke.
+* **Themen:** 25 immer (Lebenszeichen, Quelle, Wechsel und 21 Wetterwerte), 5 Zusatzwerte (gefühlte
+  Temperatur, VPD, Laufzeit, Piezo-Regen, Wind im 10-Minuten-Mittel) und die Batterien der Sensoren (WS90
+  Stufe, Akku und Kondensator, WH40 Stufe und Spannung, WH57 Stufe, WH25 Merker, Bodensensoren EC Kanal 1
+  und 2) – diese nur, wenn die Station das Feld liefert; eine Batterie 9 („nicht angemeldet“) wird nicht
+  gesendet. Fehlwerte -1, bei Temperaturen -999. Fällt die Station aus oder frieren ihre Werte ein, gehen
+  nur `status/ok` = 0, `quelle` und `wechsel` hinaus.
+* **Ab Werk:** MQTT an bei neuen Installationen. Bestehende Anlagen behalten nach dem Update den Weg über
+  HTTP (MQTT aus); Sicherungen aus 0.9.24 bleiben zurückspielbar.
+* **Reiter Einbindung in Loxone:** Schritte 1 bis 6 für MQTT – Gateway V1 (die Abo-Datei bringt das Plugin
+  mit) und V2 (Hakenliste, höchstens 41 Datenpunkte), Namenstabelle mit Kopierknopf, Ausfallerkennung am
+  Lebenszeichen (Tmc 600 s) – und drei Baustein-Listen aus dem Musterprojekt: „Ecowitt-Weiche“, „Ecowitt-Weiche
+  Wetterwerte“ (dazu UV-Schutz, Wind aus, Nebel und Frost nur mit gemessener Außentemperatur) und neu
+  „Ecowitt-Weiche Batterien“. Der bisherige Inhalt steht zugeklappt unter „Bestehende Anlagen“.
+* **Reiter Test und Protokoll:** fünf neue Prüfzeilen (Minutentakt, Namen = Themen, MQTT = HTTP je Kernfeld,
+  Abo-Datei, Einheiten) und die Zusatz- und Batteriefelder, die Ihre Station liefert.
+* `live.php`, die HTTP-Vorlagen und die Weichenlogik sind unverändert; ein Wechselzähler für beide Wege.
+* Neue Bilder aller drei Musterseiten aus dem angeordneten Musterprojekt, dazu das Bild der neuen Seite
+  „Ecowitt-Weiche Batterien“.
+* Gerendert unter PHP 7.4, 8.4 und 8.5, Minutentakt gegen zwei Stations-Attrappen geprüft; nicht am Gerät
+  angesehen.
 
 ## Neu in 0.9.24
 

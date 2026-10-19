@@ -118,6 +118,10 @@ function ew_vorgaben()
         'timeout'     => 3,          // k2: bis 0.9.17 4 (9000 ms > 8000 ms)
         'token'       => '',
         'pruefe_wert' => 1,
+        /* Gruppe 3 (0.9.25): MQTT ab Werk an - aber nur fuer NEUE Installationen; eine bestehende
+           Konfiguration ohne den Schluessel gilt als aus (ew_config(), E3). */
+        'mqtt_ein'     => 1,
+        'mqtt_praefix' => 'ecowittweiche',
     );
 }
 
@@ -485,6 +489,14 @@ function ew_wert_pruefen($k, $w)
         $ok = ew_token_taugt($w);
         $wert = $w;
         break;
+    case 'mqtt_ein':
+        $wert = ew_schalter_wert($w);
+        $ok = $wert !== null;
+        break;
+    case 'mqtt_praefix':
+        $ok = ew_mqtt_praefix_taugt($w);
+        $wert = $w;
+        break;
     }
     if ($ok) {
         return array(true, $wert, '');
@@ -643,6 +655,7 @@ function ew_config($erzeugen = true)
     $p = ew_paths();
     $c = ew_vorgaben();
     $je_gesetzt = false;
+    $mqtt_nachtragen = false;
     $d = ew_json_lesen($p['cfgdatei']);
     if (!ew_hat_inhalt($d)) {
         if (!$erzeugen) {
@@ -669,6 +682,13 @@ function ew_config($erzeugen = true)
            damit gaebe es den ersten Aufruf nie. Entscheidend ist, ob der
            SCHLUESSEL schon einmal geschrieben wurde. */
         $je_gesetzt = array_key_exists('token', $d);
+        /* Gruppe 3 (0.9.25, E3): MQTT ab Werk an nur fuer NEUE Installationen. Wurde das Wortzeichen schon
+           einmal geschrieben (bestehende Anlage) und fehlt der Schluessel mqtt_ein, gilt MQTT als aus -
+           ein Update schaltet nichts still ein. Die Oberflaeche speichert das beim ersten Aufruf mit. */
+        if ($je_gesetzt && !array_key_exists('mqtt_ein', $d)) {
+            $c['mqtt_ein'] = 0;
+            $mqtt_nachtragen = true;
+        }
     }
     /* Solange der Schluessel noch nie geschrieben wurde, ein Wortzeichen
        erzeugen - der Endpunkt soll nicht ungeschuetzt im Netz stehen. Steht
@@ -680,8 +700,11 @@ function ew_config($erzeugen = true)
     if ($erzeugen && !$je_gesetzt && $c['token'] === '') {
         $c['token'] = ew_token_erzeugen();
         ew_config_speichern($c);
+    } elseif ($erzeugen && $mqtt_nachtragen) {
+        ew_config_speichern($c);
     }
     $c['timeout'] = max(1, min(EW_WARTEZEIT_LESBAR, (int) $c['timeout']));
+    $c['mqtt_ein'] = ew_schalter_wert($c['mqtt_ein']) === 1 ? 1 : 0;
     return $c;
 }
 
@@ -1352,7 +1375,16 @@ function ew_sicherung_lesen($roh, &$namen = null)
      * ausserhalb der Konfigurationsdatei liegt - Zugangsdaten in einer
      * eigenen Datei - faellt nicht auf Werk zurueck und darf hier fehlen. */
     $fehlend = array();
+    /* Gruppe 3 (0.9.25): mqtt_ein und mqtt_praefix sind "spaete" Schluessel. Eine Sicherung aus 0.9.24 traegt
+     * sie nicht und bleibt zurueckspielbar; es gilt dieselbe Regel wie beim Update: MQTT aus, Praefix ab Werk
+     * (Entwurf 2.7). Unbekannte Schluessel bleiben eine Beanstandung. */
+    if (!array_key_exists('mqtt_ein', $daten)) {
+        $neu['mqtt_ein'] = 0;
+    }
     foreach (array_keys(ew_vorgaben()) as $fk) {
+        if ($fk === 'mqtt_ein' || $fk === 'mqtt_praefix') {
+            continue;
+        }
         if (!array_key_exists($fk, $daten)) {
             $fehlend[] = $fk;
         }
@@ -1856,6 +1888,728 @@ function ew_alter_text($sek)
 function ew_suchtext($feld)
 {
     return '\i;' . $feld . '=\i\v';
+}
+
+/* ==================================================================
+ * MQTT (Gruppe 3, 0.9.25)
+ * ==================================================================
+ * Musterprojekt/entwurf_gruppe3_ew.txt (Abschnitte 2 und 12) und
+ * ENTSCHEIDUNGEN_GRUPPE3_MQTT.md (Hausherr 19.10.2026): die Weiche bekommt
+ * MQTT. Ein Minutentakt (cron/cron.01min -> bin/ew_takt.php) ruft DIESELBE
+ * Weiche wie live.php (ew_weiche, ew_stand_schreiben, ew_alter), zieht aus
+ * der Antwort nur eine feste Liste von Zahlen und gibt sie als
+ * "publish <praefix>/<thema> <zahl>" an den UDP-Eingang des MQTT-Gateways -
+ * nie retained, nie die Rohzeile, nie ein Text. Damit kann kein
+ * Stationsschluessel in ein Thema geraten: jede Nutzlast ist eine Zahl.
+ * Praefix ab Werk "ecowittweiche", NICHT "ecowitt": das Rohthema der Station
+ * heisst ecowitt/<Kennung> und traegt den Stationsschluessel; ein Abo
+ * ecowitt/# fischte es mit (E2).
+ * live.php und die HTTP-Vorlagen bleiben unveraendert (E16).
+ * ================================================================== */
+
+/* Werte gelten als eingefroren, wenn ew_alter() mindestens so viele
+   Sekunden zaehlt (dieselbe Schwelle wie die bisherige Musterseite, E6). */
+define('EW_VERALTET', 900);
+/* Schranke gegen den Doppelstart: ein Lauf vor weniger als so vielen
+   Sekunden beendet den neuen Lauf (Regeln/03: max(30, 60 - 30)). */
+define('EW_TAKT_SCHRANKE', 30);
+/* Alle so viele Sekunden geht der volle Satz hinaus, dazwischen nur
+   Aenderungen (E8: nach einem Miniserver-Neustart ist die
+   Aussentemperatur vor Ablauf der Frostverzoegerung 600 s wieder da). */
+define('EW_VOLLVERSAND', 300);
+/* Eine Upgrade-Marke, die juenger ist, haelt den Takt an (Regeln/06). */
+define('EW_MARKE_FRIST', 3600);
+/* Ein Lauf, der laenger zurueckliegt, ist im Reiter Test ein Befund. */
+define('EW_TAKT_ALT', 180);
+define('EW_MQTT_PRAEFIX_VORGABE', 'ecowittweiche');
+
+/** Praefix: Kleinbuchstaben, Ziffern, _, hoechstens vier Ebenen - und nie unter "ecowitt": dort sendet die Station
+ *  selbst ihre Rohzeile mit dem Stationsschluessel, und ein Abo <praefix>/# (Gateway V1, Abo-Datei) holte sie mit
+ *  nach Loxone (E2; der Schluessel darf in keinem Thema stehen). */
+function ew_mqtt_praefix_taugt($p)
+{
+    return is_string($p) && preg_match('#^[a-z0-9_]+(/[a-z0-9_]+){0,3}\z#', $p) === 1
+        && preg_match('#^ecowitt(/|\z)#', $p) !== 1;
+}
+
+/** Das gueltige Praefix aus der Konfiguration, sonst die Vorgabe. */
+function ew_mqtt_praefix($c = null)
+{
+    $p = (is_array($c) && isset($c['mqtt_praefix'])) ? $c['mqtt_praefix'] : EW_MQTT_PRAEFIX_VORGABE;
+    return ew_mqtt_praefix_taugt($p) ? $p : EW_MQTT_PRAEFIX_VORGABE;
+}
+
+/** Der Name, den das MQTT-Gateway (V1 und V2) aus dem Thema macht: "/",
+ *  Leerzeichen und "%" werden "_" (Regeln/07). EINE Funktion fuer
+ *  Namenstabelle, Hakenliste, Baustein-Liste und Selbstpruefung. */
+function ew_mqtt_gateway_name($thema, $c = null)
+{
+    return str_replace(array('/', ' ', '%'), '_', ew_mqtt_praefix($c) . '/' . $thema);
+}
+
+/**
+ * Die Themen des Minutentakts - EINE Liste fuer Takt, Reiter MQTT
+ * (Themenliste), Hakenliste fuer Gateway V2, Namenstabelle und
+ * Selbstpruefung (Regeln/07). Je Eintrag:
+ *   thema, name (Gateway), klasse (kern | wahl | batterie | batterie_wahl |
+ *   weitere), quelle (array: art und Feld), fehlwert (null = keiner),
+ *   einheit (Anzeige des Virtuellen Eingangs), min, max, bedeutung
+ *   (Sprachschluessel), seite (Musterprojekt-Seite 1..3, 0 = keine).
+ * kern: wird immer gesendet; fehlt das Feld oder traegt es keine Zahl, geht
+ * der Fehlwert hinaus (-1, -999 bei Temperaturen - E4).
+ * wahl, batterie, batterie_wahl: nur, wenn die Station das Feld liefert;
+ * steht es da, aber ohne Zahl, der Fehlwert; eine Batterie 9 heisst "nicht
+ * angemeldet" und wird nicht gesendet (E20).
+ * weitere: status/ts, in Loxone nicht gebraucht.
+ */
+function ew_mqtt_namen($c = null)
+{
+    $g = "\u{00B0}";
+    $roh = array(
+        array('status/ok', 'kern', array('weiche', 'ok'), null, '<v.0>', 0, 1, 1),
+        array('status/zaehler', 'kern', array('weiche', 'zaehler'), null, '<v.0>', 0, 999, 1),
+        array('status/ts', 'weitere', array('weiche', 'ts'), null, '<v.0> s', 0, 2147483647, 0),
+        array('quelle', 'kern', array('weiche', 'quelle'), null, '<v.0>', 0, 2, 1),
+        array('wechsel', 'kern', array('weiche', 'wechsel'), null, '<v.0>', 0, 100000, 1),
+        array('aussentemperatur', 'kern', array('id', '0x02'), -999, '<v.1> ' . $g . 'C', -999, 70, 2),
+        array('aussenfeuchte', 'kern', array('id', '0x07'), -1, '<v.0> %', -1, 100, 2),
+        array('taupunkt', 'kern', array('id', '0x03'), -999, '<v.1> ' . $g . 'C', -999, 50, 2),
+        array('windrichtung', 'kern', array('id', '0x0A'), -1, '<v.0>' . $g, -1, 360, 2),
+        array('wind', 'kern', array('id', '0x0B'), -1, '<v.1> km/h', -1, 300, 2),
+        array('boee', 'kern', array('id', '0x0C'), -1, '<v.1> km/h', -1, 300, 2),
+        array('boee_max_heute', 'kern', array('id', '0x19'), -1, '<v.1> km/h', -1, 300, 2),
+        array('solar', 'kern', array('id', '0x15'), -1, "<v.0> W/m\u{00B2}", -1, 2000, 2),
+        array('uv', 'kern', array('id', '0x17'), -1, '<v.0>', -1, 20, 2),
+        array('regenrate', 'kern', array('feld', '0x0E'), -1, '<v.1> mm/h', -1, 500, 2),
+        array('regen_ereignis', 'kern', array('feld', '0x0D'), -1, '<v.1> mm', -1, 1000, 2),
+        array('regen_heute', 'kern', array('feld', '0x10'), -1, '<v.1> mm', -1, 1000, 2),
+        array('regen_woche', 'kern', array('feld', '0x11'), -1, '<v.1> mm', -1, 2000, 2),
+        array('regen_monat', 'kern', array('feld', '0x12'), -1, '<v.1> mm', -1, 5000, 2),
+        array('regen_jahr', 'kern', array('feld', '0x13'), -1, '<v.0> mm', -1, 10000, 2),
+        array('innentemperatur', 'kern', array('feld', 'intemp'), -999, '<v.1> ' . $g . 'C', -999, 60, 2),
+        array('innenfeuchte', 'kern', array('feld', 'inhumi'), -1, '<v.0> %', -1, 100, 2),
+        array('luftdruck_rel', 'kern', array('feld', 'rel'), -1, '<v.1> hPa', -1, 1200, 2),
+        array('luftdruck_abs', 'kern', array('feld', 'abs'), -1, '<v.1> hPa', -1, 1200, 2),
+        array('blitz_entfernung', 'kern', array('feld', 'distance'), -1, '<v.0> km', -1, 100, 2),
+        array('blitz_anzahl', 'kern', array('feld', 'count'), -1, '<v.0>', -1, 100000, 2),
+        array('gefuehlt', 'wahl', array('id', '3'), -999, '<v.1> ' . $g . 'C', -999, 70, 2),
+        array('vpd', 'wahl', array('id', '5'), -1, '<v.2> kPa', -1, 20, 2),
+        array('laufzeit', 'wahl', array('feld', 'runtime'), -1, '<v.0> s', -1, 2147483647, 2),
+        array('regnet', 'wahl', array('feld', 'srain_piezo'), -1, '<v.0>', -1, 1, 2),
+        array('windrichtung_10min', 'wahl', array('id', '0x6D'), -1, '<v.0>' . $g, -1, 360, 2),
+        array('batterie_ws90', 'batterie', array('block', 'piezoRain', 'battery'), -1, '<v.0>', -1, 5, 3),
+        array('spannung_ws90', 'batterie', array('block', 'piezoRain', 'voltage'), -1, '<v.2> V', -1, 10, 3),
+        array('kondensator_ws90', 'batterie', array('block', 'piezoRain', 'ws90cap_volt'), -1, '<v.2> V', -1, 10, 3),
+        array('batterie_wh40', 'batterie', array('block', 'rain', 'battery'), -1, '<v.0>', -1, 5, 3),
+        array('spannung_wh40', 'batterie', array('block', 'rain', 'voltage'), -1, '<v.2> V', -1, 10, 3),
+        array('batterie_wh57', 'batterie', array('block', 'lightning', 'battery'), -1, '<v.0>', -1, 5, 3),
+        array('batterie_wh25', 'batterie', array('block', 'wh25', 'battery'), -1, '<v.0>', -1, 1, 3),
+        array('batterie_ec1', 'batterie_wahl', array('kanal', 'ch_ec', 1, 'battery'), -1, '<v.0>', -1, 5, 0),
+        array('spannung_ec1', 'batterie_wahl', array('kanal', 'ch_ec', 1, 'voltage'), -1, '<v.2> V', -1, 10, 0),
+        array('batterie_ec2', 'batterie_wahl', array('kanal', 'ch_ec', 2, 'battery'), -1, '<v.0>', -1, 5, 0),
+        array('spannung_ec2', 'batterie_wahl', array('kanal', 'ch_ec', 2, 'voltage'), -1, '<v.2> V', -1, 10, 0),
+    );
+    $aus = array();
+    foreach ($roh as $r) {
+        $aus[] = array('thema' => $r[0], 'name' => ew_mqtt_gateway_name($r[0], $c), 'klasse' => $r[1],
+                       'quelle' => $r[2], 'fehlwert' => $r[3], 'einheit' => $r[4], 'min' => $r[5],
+                       'max' => $r[6], 'seite' => $r[7],
+                       'bedeutung' => 'MQTT.T_' . strtoupper(str_replace('/', '_', $r[0])));
+    }
+    return $aus;
+}
+
+/**
+ * Ein Feld in der Stationsantwort suchen, in DOKUMENTREIHENFOLGE - dieselbe
+ * Regel, nach der Loxones Suchtext die erste Fundstelle nimmt (etwa "0x0E" in
+ * rain vor piezoRain). $nur_id: nur ein Objekt mit "id" = $name zaehlt (sein
+ * "val"); sonst auch ein Schluessel $name. Rueckgabe: der Wert als
+ * Zeichenkette, '' fuer einen Wert ohne Text, null = nicht gefunden.
+ */
+function ew_mqtt_suchen($knoten, $name, $nur_id)
+{
+    if (!is_array($knoten)) {
+        return null;
+    }
+    foreach ($knoten as $k => $v) {
+        if (!$nur_id && (string) $k === $name && !is_array($v)) {
+            return $v === null ? '' : (is_bool($v) ? ($v ? '1' : '0') : (string) $v);
+        }
+        if ((string) $k === 'id' && !is_array($v) && (string) $v === $name) {
+            $val = isset($knoten['val']) ? $knoten['val'] : null;
+            return (is_array($val) || $val === null) ? '' : (string) $val;
+        }
+        if (is_array($v)) {
+            $r = ew_mqtt_suchen($v, $name, $nur_id);
+            if ($r !== null) {
+                return $r;
+            }
+        }
+    }
+    return null;
+}
+
+/** Ein Schluessel innerhalb eines Blocks (Liste oder Objekt), erste
+ *  Fundstelle; null = nicht da. */
+function ew_mqtt_im_block($block, $feld)
+{
+    if (!is_array($block)) {
+        return null;
+    }
+    foreach ($block as $k => $v) {
+        if ((string) $k === $feld && !is_array($v)) {
+            return $v === null ? '' : (string) $v;
+        }
+        if (is_array($v)) {
+            $r = ew_mqtt_im_block($v, $feld);
+            if ($r !== null) {
+                return $r;
+            }
+        }
+    }
+    return null;
+}
+
+/** Ein Feld eines Kanals in einem Kanalblock (ch_ec). Traegt ein Element
+ *  das Feld "channel", zaehlt es; traegt keines eines, gilt die Reihenfolge
+ *  im Block (Entwurf 12.2). */
+function ew_mqtt_kanal($block, $nr, $feld)
+{
+    if (!is_array($block)) {
+        return null;
+    }
+    $mit = false;
+    foreach ($block as $e) {
+        if (is_array($e) && array_key_exists('channel', $e)) {
+            $mit = true;
+            if ((string) $e['channel'] === (string) $nr) {
+                return (isset($e[$feld]) && !is_array($e[$feld])) ? (string) $e[$feld] : (array_key_exists($feld, $e) ? '' : null);
+            }
+        }
+    }
+    if ($mit) {
+        return null;
+    }
+    $liste = array_values($block);
+    $e = isset($liste[$nr - 1]) ? $liste[$nr - 1] : null;
+    if (!is_array($e) || !array_key_exists($feld, $e)) {
+        return null;
+    }
+    return is_array($e[$feld]) ? '' : (string) $e[$feld];
+}
+
+/** Die Zahl am Anfang einer Zeichenkette, unveraendert (keine
+ *  Umformatierung, wie live.php); null = keine Zahl ("--", "---.-"). */
+function ew_mqtt_zahl($s)
+{
+    if (!is_string($s) || !preg_match('/^\s*(-?[0-9]+(?:\.[0-9]+)?)/', $s, $m)) {
+        return null;
+    }
+    return $m[1];
+}
+
+/**
+ * Die Werte einer Stationsantwort fuer MQTT. Rueckgabe array(
+ *   'werte'     => thema => Zahl als Zeichenkette (nur Messwerte),
+ *   'gefunden'  => Themen der Klassen wahl/batterie/batterie_wahl, die die
+ *                  Station liefert,
+ *   'einheiten' => Einheiten, die nicht metrisch sind (Hinweis, E11)).
+ */
+function ew_mqtt_werte($roh)
+{
+    $aus = array('werte' => array(), 'gefunden' => array(), 'einheiten' => array());
+    $d = is_string($roh) ? json_decode($roh, true) : null;
+    if (!is_array($d)) {
+        return $aus;
+    }
+    foreach (ew_mqtt_namen() as $e) {
+        $q = $e['quelle'];
+        if ($q[0] === 'weiche') {
+            continue;
+        }
+        if ($q[0] === 'id') {
+            $w = ew_mqtt_suchen($d, $q[1], true);
+        } elseif ($q[0] === 'feld') {
+            $w = ew_mqtt_suchen($d, $q[1], false);
+        } elseif ($q[0] === 'block') {
+            $w = isset($d[$q[1]]) ? ew_mqtt_im_block($d[$q[1]], $q[2]) : null;
+        } else {
+            $w = isset($d[$q[1]]) ? ew_mqtt_kanal($d[$q[1]], $q[2], $q[3]) : null;
+        }
+        $zahl = ew_mqtt_zahl($w);
+        if ($e['klasse'] !== 'kern') {
+            if ($w === null) {
+                continue;
+            }
+            /* batt = 9 heisst "nicht angemeldet" (Messung 19.10.2026) */
+            if (($q[0] === 'block' || $q[0] === 'kanal') && end($q) === 'battery' && $zahl === '9') {
+                continue;
+            }
+            $aus['gefunden'][] = $e['thema'];
+        }
+        $aus['werte'][$e['thema']] = $zahl !== null ? $zahl : (string) $e['fehlwert'];
+    }
+    $aus['einheiten'] = ew_mqtt_einheiten($d);
+    return $aus;
+}
+
+/** Einheiten der Stationsantwort, die nicht Grad C, km/h, mm, mm/h bzw. hPa
+ *  sind - nur fuer einen Hinweis im Reiter Test; umgerechnet wird nichts (E11). */
+function ew_mqtt_einheiten(array $d)
+{
+    $fremd = array();
+    $soll = array('temp' => array('C'), 'wind' => array('km/h'), 'regen' => array('mm', 'mm/Hr', 'mm/h'),
+                  'druck' => array('hPa'));
+    $art = array('0x02' => 'temp', '0x03' => 'temp', '3' => 'temp', '0x0B' => 'wind', '0x0C' => 'wind',
+                 '0x19' => 'wind', '0x0D' => 'regen', '0x0E' => 'regen', '0x10' => 'regen', '0x11' => 'regen',
+                 '0x12' => 'regen', '0x13' => 'regen');
+    $sammeln = function ($knoten) use (&$sammeln, &$fremd, $soll, $art) {
+        if (!is_array($knoten)) {
+            return;
+        }
+        if (isset($knoten['id']) && !is_array($knoten['id']) && isset($art[(string) $knoten['id']])) {
+            $a = $art[(string) $knoten['id']];
+            $e = '';
+            if ($a === 'temp') {
+                $e = (isset($knoten['unit']) && is_string($knoten['unit'])) ? trim($knoten['unit']) : '';
+            } elseif (isset($knoten['val']) && is_string($knoten['val'])
+                      && preg_match('/^\s*-?[0-9.]+\s*(\S.*)$/', $knoten['val'], $m)) {
+                $e = trim($m[1]);
+            }
+            if ($e !== '' && !in_array($e, $soll[$a], true)) {
+                $fremd[$e] = true;
+            }
+        }
+        foreach (array('rel', 'abs') as $k) {
+            if (isset($knoten[$k]) && is_string($knoten[$k])
+                && preg_match('/^\s*-?[0-9.]+\s*(\S.*)$/', $knoten[$k], $m) && trim($m[1]) !== 'hPa') {
+                $fremd[trim($m[1])] = true;
+            }
+        }
+        foreach ($knoten as $v) {
+            if (is_array($v)) {
+                $sammeln($v);
+            }
+        }
+    };
+    $sammeln($d);
+    $l = array_keys($fremd);
+    sort($l);
+    return array_map('strval', $l);
+}
+
+/**
+ * Ein Loxone-Suchtext (Befehlserkennung) auf eine Antwort angewandt, wie der
+ * Miniserver ihn liest: Text wird der Reihe nach gesucht, \i trennt, \v liest
+ * die Zahl an der Stelle. Rueckgabe die Zahl als Zeichenkette, null = keine
+ * (Loxone macht daraus 0). Nur fuer die Selbstpruefung "MQTT = HTTP".
+ */
+function ew_suchtext_wert($roh, $such)
+{
+    if (!is_string($roh) || !is_string($such)) {
+        return null;
+    }
+    $p = 0;
+    foreach (preg_split('/(\\\\[iv])/', $such, -1, PREG_SPLIT_DELIM_CAPTURE) as $t) {
+        if ($t === '' || $t === '\i') {
+            continue;
+        }
+        if ($t === '\v') {
+            return preg_match('/\G\s*(-?[0-9]+(?:\.[0-9]+)?)/', $roh, $m, 0, $p) ? $m[1] : null;
+        }
+        $q = strpos($roh, $t, $p);
+        if ($q === false) {
+            return null;
+        }
+        $p = $q + strlen($t);
+    }
+    return null;
+}
+
+/**
+ * Selbstpruefung "MQTT = HTTP" (E18): je Kernfeld der Stationsvorlage den
+ * Suchtext aus ew_wetter_befehle() auf dieselbe Antwort anwenden und mit dem
+ * MQTT-Wert vergleichen. Kein Zahlwert ueber HTTP gilt als gleich, wenn MQTT
+ * den Fehlwert sendet. $befehle nur fuer die Eichung (vertauschtes Feld).
+ * Rueckgabe array('geprueft' => n, 'abweichend' => Themen).
+ */
+function ew_mqtt_http_vergleich($roh, $werte = null, $befehle = null)
+{
+    if (!is_array($werte)) {
+        $werte = ew_mqtt_werte($roh);
+        $werte = $werte['werte'];
+    }
+    if (!is_array($befehle)) {
+        $befehle = ew_wetter_befehle();
+    }
+    $kern = array();
+    foreach (ew_mqtt_namen() as $e) {
+        if ($e['klasse'] === 'kern' && $e['quelle'][0] !== 'weiche') {
+            $kern[] = $e;
+        }
+    }
+    $ab = array();
+    foreach ($kern as $i => $e) {
+        if (!isset($befehle[$i])) {
+            $ab[] = $e['thema'];
+            continue;
+        }
+        $http = ew_suchtext_wert($roh, $befehle[$i][1]);
+        $mq = isset($werte[$e['thema']]) ? (string) $werte[$e['thema']] : null;
+        $gleich = ($http === null) ? ($mq === (string) $e['fehlwert'])
+                                   : ($mq !== null && (float) $mq === (float) $http);
+        if (!$gleich) {
+            $ab[] = $e['thema'];
+        }
+    }
+    return array('geprueft' => count($kern), 'abweichend' => $ab);
+}
+
+/** Eine nachgebildete Stationsantwort mit allen Feldern, die das Plugin
+ *  liest (Aufbau wie get_livedata_info, Werte erfunden). Nur fuer die
+ *  Selbstpruefung im Reiter Test; der Takt fragt immer die Station. */
+function ew_mqtt_probeantwort()
+{
+    return '{"common_list":[{"id":"0x02","val":"12.3","unit":"C"},{"id":"0x07","val":"78%"},'
+        . '{"id":"3","val":"11.8","unit":"C"},{"id":"0x03","val":"8.6","unit":"C"},'
+        . '{"id":"5","val":"0.317","unit":"kPa"},{"id":"0x0B","val":"4.3 km/h"},{"id":"0x0C","val":"7.2 km/h"},'
+        . '{"id":"0x19","val":"25.2 km/h"},{"id":"0x15","val":"123.45 W/m2"},{"id":"0x17","val":"1"},'
+        . '{"id":"0x0A","val":"215"},{"id":"0x6D","val":"220"}],'
+        . '"rain":[{"id":"0x0D","val":"0.8 mm"},{"id":"0x0E","val":"1.2 mm/Hr"},{"id":"0x10","val":"0.4 mm"},'
+        . '{"id":"0x11","val":"3.2 mm"},{"id":"0x12","val":"20.9 mm"},'
+        . '{"id":"0x13","val":"195.8 mm","battery":"5","voltage":"1.5"}],'
+        . '"piezoRain":[{"id":"srain_piezo","val":"0"},{"id":"0x0D","val":"0.0 mm"},{"id":"0x0E","val":"0.0 mm/Hr"},'
+        . '{"id":"0x13","val":"207.8 mm","battery":"5","voltage":"3.02","ws90cap_volt":"4.5","ws90_ver":"162"}],'
+        . '"lightning":[{"distance":"12 km","timestamp":"10/19/2026 10:00:00","count":"3","battery":"5"}],'
+        . '"wh25":[{"intemp":"21.4","unit":"C","inhumi":"52%","abs":"985.3 hPa","rel":"1013.6 hPa","battery":"0"}],'
+        . '"ch_ec":[{"channel":"1","name":"","battery":"5","voltage":"1.50"},'
+        . '{"channel":"2","name":"","battery":"5","voltage":"1.56"}],'
+        . '"debug":[{"heap":"110000","runtime":"86400","usr_interval":"60"}]}';
+}
+
+/** Das MQTT-Gateway laut general.json: fassung (0 = nicht feststellbar,
+ *  sonst Gatewayversion mit Rueckfall 1), autostart, udpport (Rueckfall
+ *  11884). Gelesen wird nur, nie ein Kennwort. */
+function ew_mqtt_gateway()
+{
+    $aus = array('fassung' => 0, 'autostart' => 0, 'udpport' => 11884, 'gefunden' => 0);
+    $lb = ew_paths()['lbhome'];
+    $g = $lb !== '' ? ew_json_lesen($lb . '/config/system/general.json') : null;
+    $m = (is_array($g) && isset($g['Mqtt']) && is_array($g['Mqtt'])) ? $g['Mqtt'] : null;
+    if ($m === null) {
+        return $aus;
+    }
+    $aus['gefunden'] = 1;
+    $aus['fassung'] = (isset($m['Gatewayversion']) && is_numeric($m['Gatewayversion'])) ? (int) $m['Gatewayversion'] : 1;
+    $aus['autostart'] = (isset($m['Gatewayautostart'])
+        && in_array((string) $m['Gatewayautostart'], array('1', 'true'), true)) ? 1 : 0;
+    $port = isset($m['Udpinport']) ? (int) $m['Udpinport'] : 0;
+    if ($port > 0 && $port <= 65535) {
+        $aus['udpport'] = $port;
+    }
+    return $aus;
+}
+
+/**
+ * Zeilen an den UDP-Eingang des MQTT-Gateways: "publish <praefix>/<thema>
+ * <zahl>", nie "retain" (Messwerte und Aussagen ueber sich selbst sind nie
+ * retained, Regeln/07). fsockopen statt socket_* (steht im PHP-Kern), 5 ms
+ * zwischen zwei Datagrammen (Regeln/07: der UDP-Eingang verwirft unter
+ * Last). Gezaehlt wird "gesendet", nicht "uebermittelt".
+ */
+function ew_mqtt_senden($praefix, array $paare, $port)
+{
+    if (!$paare) {
+        return 0;
+    }
+    $fp = @fsockopen('udp://127.0.0.1', (int) $port, $eno, $etxt, 2);
+    if (!$fp) {
+        return 0;
+    }
+    stream_set_timeout($fp, 2);
+    $n = 0;
+    $i = 0;
+    foreach ($paare as $t => $w) {
+        if (ew_mqtt_zahl((string) $w) !== (string) $w) {
+            continue;
+        }
+        if ($i++ > 0) {
+            usleep(5000);
+        }
+        $z = 'publish ' . $praefix . '/' . $t . ' ' . $w . "\n";
+        if (@fwrite($fp, $z) === strlen($z)) {
+            $n++;
+        }
+    }
+    fclose($fp);
+    return $n;
+}
+
+/** Ablage des Takts im Datenordner (kein Wortzeichen, keine Rohantwort). */
+function ew_takt_datei()
+{
+    $p = ew_paths();
+    return $p['datadir'] !== '' ? $p['datadir'] . '/takt.json' : '';
+}
+
+function ew_takt_lesen()
+{
+    $d = ew_json_lesen(ew_takt_datei());
+    return is_array($d) ? $d : array();
+}
+
+/** Merker "beim naechsten Lauf alles senden" (Speichern im Reiter MQTT). */
+function ew_takt_voll_merken()
+{
+    $p = ew_paths();
+    if ($p['datadir'] === '') {
+        return false;
+    }
+    if (!is_dir($p['datadir'])) {
+        @mkdir($p['datadir'], 0775, true);
+    }
+    return @file_put_contents($p['datadir'] . '/takt.voll', (string) time()) !== false;
+}
+
+/** Die Abo-Datei fuer Gateway V1 (config/mqtt_subscriptions.cfg). */
+function ew_abo_datei()
+{
+    $p = ew_paths();
+    return $p['config'] !== '' ? $p['config'] . '/mqtt_subscriptions.cfg' : '';
+}
+
+/** Traegt die Abo-Datei das Abo <praefix>/#? Rueckgabe array(da, traegt). */
+function ew_abo_pruefen($c = null)
+{
+    $f = ew_abo_datei();
+    if ($f === '' || !is_file($f)) {
+        return array(false, false);
+    }
+    $soll = ew_mqtt_praefix($c) . '/#';
+    foreach (preg_split('/\r?\n/', (string) @file_get_contents($f)) as $z) {
+        if (trim($z) === $soll) {
+            return array(true, true);
+        }
+    }
+    return array(true, false);
+}
+
+/** Die Abo-Datei auf <praefix>/# setzen - nur, wenn sie abweicht, mit
+ *  Protokollzeile (Entwurf 2.3). Rueckgabe true, wenn sie danach stimmt. */
+function ew_abo_schreiben($c = null)
+{
+    list($da, $traegt) = ew_abo_pruefen($c);
+    if ($traegt) {
+        return true;
+    }
+    $f = ew_abo_datei();
+    if ($f === '' || !is_dir(dirname($f))) {
+        return false;
+    }
+    $tmp = $f . '.tmp.' . getmypid();
+    if (@file_put_contents($tmp, ew_mqtt_praefix($c) . "/#\n") === false || !@rename($tmp, $f)) {
+        @unlink($tmp);
+        return false;
+    }
+    ew_log('MQTT: Abo-Datei auf ' . ew_mqtt_praefix($c) . '/# gesetzt (Gateway V1).');
+    return true;
+}
+
+/**
+ * EIN Lauf des Minutentakts (bin/ew_takt.php). Rueckgabe array mit 'ende'
+ * (upgrade | ohne_wurzel | nicht_eingerichtet | mqtt_aus | sperre_fehlt |
+ * besetzt | schranke | gelaufen); nach einem Lauf dazu der Stand aus
+ * takt.json und 'paare' (die gesendeten Themen).
+ *  1. Upgrade-Marke juenger als EW_MARKE_FRIST -> Ende (Regeln/06).
+ *  2. ew_config(false) - liest nur, heilt und legt nichts an (wie live.php);
+ *     null oder MQTT aus -> Ende, die Station wird NICHT gefragt.
+ *  3. Sperre takt.lock, nicht blockierend; besetzt -> Ende (Regeln/03).
+ *  4. Schranke: letzter Lauf vor weniger als EW_TAKT_SCHRANKE s -> Ende.
+ *  5. Dieselben drei Aufrufe wie live.php: ew_weiche, ew_stand_schreiben,
+ *     ew_alter - ein Wechselzaehler fuer HTTP und MQTT (E16).
+ *  6. Lebenszeichen jede Minute; uebrige Themen bei Aenderung, alle
+ *     EW_VOLLVERSAND s und nach dem Speichern im Reiter MQTT alle. Bei Ausfall
+ *     oder eingefrorener Station nur das Signal (status/ok 0, quelle,
+ *     wechsel), die Messwerte bleiben stehen (Regeln/07, E5).
+ */
+function ew_takt()
+{
+    $p = ew_paths();
+    if ($p['datadir'] === '' || $p['lbhome'] === '') {
+        return array('ende' => 'ohne_wurzel');
+    }
+    $marke = dirname($p['datadir']) . '/' . $p['plugin'] . '.upgrade_laeuft';
+    clearstatcache(true, $marke);
+    if (is_file($marke) && abs(time() - (int) @filemtime($marke)) < EW_MARKE_FRIST) {
+        return array('ende' => 'upgrade');
+    }
+    $c = ew_config(false);
+    if ($c === null) {
+        return array('ende' => 'nicht_eingerichtet');
+    }
+    if (empty($c['mqtt_ein'])) {
+        return array('ende' => 'mqtt_aus');
+    }
+    if (!is_dir($p['datadir'])) {
+        @mkdir($p['datadir'], 0775, true);
+    }
+    $sperre = @fopen($p['datadir'] . '/takt.lock', 'c');
+    if ($sperre === false) {
+        return array('ende' => 'sperre_fehlt');
+    }
+    if (!flock($sperre, LOCK_EX | LOCK_NB)) {
+        fclose($sperre);
+        return array('ende' => 'besetzt');
+    }
+    $alt = ew_takt_lesen();
+    $jetzt = time();
+    $vorher = isset($alt['ts']) ? (int) $alt['ts'] : 0;
+    if ($vorher > 0 && $jetzt - $vorher >= 0 && $jetzt - $vorher < EW_TAKT_SCHRANKE) {
+        flock($sperre, LOCK_UN);
+        fclose($sperre);
+        return array('ende' => 'schranke');
+    }
+    $w = ew_weiche($c, ew_stand_lesen());
+    $stand = ew_stand_schreiben($w);
+    $alter = ew_alter($stand);
+    $ok = $w['ok'] && $alter >= 0 && $alter < EW_VERALTET;
+    $q = ($w['quelle'] === 'primaer') ? 1 : (($w['quelle'] === 'ersatz') ? 2 : 0);
+    $zaehler = isset($alt['zaehler']) ? ((int) $alt['zaehler'] + 1) % 1000 : 0;
+    $praefix = ew_mqtt_praefix($c);
+    $vollmerk = $p['datadir'] . '/takt.voll';
+    $voll_ts = isset($alt['voll_ts']) ? (int) $alt['voll_ts'] : 0;
+    $voll = $voll_ts <= 0 || $jetzt - $voll_ts >= EW_VOLLVERSAND || $jetzt < $voll_ts || is_file($vollmerk)
+         || !isset($alt['praefix']) || $alt['praefix'] !== $praefix;
+    $letzte = (isset($alt['letzte']) && is_array($alt['letzte'])) ? $alt['letzte'] : array();
+    $neu = array('quelle' => (string) $q, 'wechsel' => (string) (int) $stand['wechsel']);
+    $takt = array('felder' => isset($alt['felder']) && is_array($alt['felder']) ? $alt['felder'] : array(),
+                  'einheiten' => isset($alt['einheiten']) && is_array($alt['einheiten']) ? $alt['einheiten'] : array(),
+                  'vergleich' => isset($alt['vergleich']) && is_array($alt['vergleich']) ? $alt['vergleich'] : null);
+    if ($ok) {
+        $mw = ew_mqtt_werte($w['roh']);
+        $neu = $neu + $mw['werte'];
+        $takt['felder'] = $mw['gefunden'];
+        $takt['einheiten'] = $mw['einheiten'];
+        $takt['vergleich'] = ew_mqtt_http_vergleich($w['roh'], $mw['werte']);
+    }
+    $paare = array('status/ok' => $ok ? '1' : '0', 'status/ts' => (string) $jetzt, 'status/zaehler' => (string) $zaehler);
+    foreach ($neu as $t => $v) {
+        if ($voll || !array_key_exists($t, $letzte) || (string) $letzte[$t] !== (string) $v) {
+            $paare[$t] = (string) $v;
+        }
+    }
+    $gw = ew_mqtt_gateway();
+    $n = ew_mqtt_senden($praefix, $paare, $gw['udpport']);
+    foreach ($paare as $t => $v) {
+        if (strpos($t, 'status/') !== 0) {
+            $letzte[$t] = $v;
+        }
+    }
+    if (is_file($vollmerk)) {
+        @unlink($vollmerk);
+    }
+    $log_ts = isset($alt['log_versand_ts']) ? (int) $alt['log_versand_ts'] : 0;
+    if ($n < count($paare) && ($jetzt - $log_ts >= 3600 || $jetzt < $log_ts)) {
+        ew_log('MQTT: Versand gescheitert - ' . $n . ' von ' . count($paare) . ' Zeilen an den UDP-Eingang '
+             . (int) $gw['udpport'] . ' gegeben (diese Meldung hoechstens stuendlich).');
+        $log_ts = $jetzt;
+    }
+    ew_abo_schreiben($c);
+    $takt = array('ts' => $jetzt, 'zaehler' => $zaehler, 'ok' => $ok ? 1 : 0, 'quelle' => $q,
+                  'themen' => count($paare), 'gesendet' => $n, 'vollversand' => $voll ? 1 : 0,
+                  'voll_ts' => $voll ? $jetzt : $voll_ts, 'praefix' => $praefix, 'udpport' => (int) $gw['udpport'],
+                  'log_versand_ts' => $log_ts, 'letzte' => $letzte) + $takt;
+    ew_json_schreiben(ew_takt_datei(), $takt);
+    flock($sperre, LOCK_UN);
+    fclose($sperre);
+    return array('ende' => 'gelaufen', 'paare' => $paare) + $takt;
+}
+
+/* ---------- Selbstpruefungen des Reiters Test (Entwurf 2.9) ---------- */
+
+/** (1) Jeder Name der Namenstabelle ist ein Thema, das der Takt sendet -
+ *  Gegenprobe mit der nachgebildeten Antwort. */
+function ew_pruef_mqtt_namen($c = null)
+{
+    $mw = ew_mqtt_werte(ew_mqtt_probeantwort());
+    $gesendet = array_merge(array('status/ok', 'status/ts', 'status/zaehler', 'quelle', 'wechsel'),
+                            array_keys($mw['werte']));
+    $namen = array();
+    foreach (ew_mqtt_namen($c) as $e) {
+        $namen[] = $e['thema'];
+    }
+    $fehlt = array_values(array_diff($namen, $gesendet));
+    $mehr = array_values(array_diff($gesendet, $namen));
+    if ($fehlt || $mehr) {
+        return array('fehl', sprintf(ew_t('TEST.MQTT_NAMEN_FEHL'), implode(', ', array_merge($fehlt, $mehr))));
+    }
+    return array('ok', sprintf(ew_t('TEST.MQTT_NAMEN_OK'), count($namen)));
+}
+
+/** (2) MQTT = HTTP je Kernfeld: aus dem letzten Lauf, sonst an der
+ *  nachgebildeten Antwort. */
+function ew_pruef_mqtt_http()
+{
+    $t = ew_takt_lesen();
+    if (isset($t['vergleich']['geprueft']) && isset($t['vergleich']['abweichend']) && is_array($t['vergleich']['abweichend'])) {
+        $v = $t['vergleich'];
+        $woher = ew_t('TEST.MQTT_HTTP_LAUF');
+    } else {
+        $v = ew_mqtt_http_vergleich(ew_mqtt_probeantwort());
+        $woher = ew_t('TEST.MQTT_HTTP_PROBE');
+    }
+    if ($v['abweichend']) {
+        return array('fehl', sprintf(ew_t('TEST.MQTT_HTTP_FEHL'), count($v['abweichend']), (int) $v['geprueft'],
+            implode(', ', $v['abweichend']), $woher));
+    }
+    return array('ok', sprintf(ew_t('TEST.MQTT_HTTP_OK'), (int) $v['geprueft'], $woher));
+}
+
+/** (3) Abo-Datei traegt <praefix>/# (nur unter Gateway V1 von Belang). */
+function ew_pruef_mqtt_abo($c = null)
+{
+    list($da, $traegt) = ew_abo_pruefen($c);
+    $gw = ew_mqtt_gateway();
+    $soll = ew_mqtt_praefix($c) . '/#';
+    if ($traegt) {
+        return array('ok', sprintf(ew_t('TEST.ABO_OK'), $soll));
+    }
+    if ($gw['fassung'] >= 2) {
+        return array('hinweis', sprintf(ew_t('TEST.ABO_V2'), $soll));
+    }
+    return array('fehl', sprintf(ew_t($da ? 'TEST.ABO_FALSCH' : 'TEST.ABO_FEHLT'), $soll));
+}
+
+/** (4) Einheiten der Station: nur ein Hinweis. */
+function ew_pruef_mqtt_einheiten()
+{
+    $t = ew_takt_lesen();
+    if (!isset($t['einheiten']) || !is_array($t['einheiten']) || empty($t['ts'])) {
+        return array('hinweis', ew_t('TEST.EINHEIT_UNBEKANNT'));
+    }
+    if ($t['einheiten']) {
+        return array('hinweis', sprintf(ew_t('TEST.EINHEIT_FREMD'), implode(', ', $t['einheiten'])));
+    }
+    return array('ok', ew_t('TEST.EINHEIT_OK'));
+}
+
+/** (5) Letzter Lauf des Takts juenger als EW_TAKT_ALT s, wenn MQTT an. */
+function ew_pruef_mqtt_takt(array $c)
+{
+    if (empty($c['mqtt_ein'])) {
+        return array('hinweis', ew_t('TEST.TAKT_AUS'));
+    }
+    $t = ew_takt_lesen();
+    $ts = isset($t['ts']) ? (int) $t['ts'] : 0;
+    if ($ts <= 0) {
+        return array('fehl', sprintf(ew_t('TEST.TAKT_NIE'), EW_TAKT_ALT));
+    }
+    $a = time() - $ts;
+    if ($a < 0 || $a > EW_TAKT_ALT) {
+        return array('fehl', sprintf(ew_t('TEST.TAKT_ALT'), ew_alter_text($a), EW_TAKT_ALT));
+    }
+    return array('ok', sprintf(ew_t('TEST.TAKT_OK'), ew_alter_text($a), isset($t['zaehler']) ? (int) $t['zaehler'] : 0,
+        isset($t['gesendet']) ? (int) $t['gesendet'] : 0));
 }
 
 /* ==================================================================

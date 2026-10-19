@@ -69,4 +69,6 @@ fi
 echo "<INFO> Der virtuelle HTTP-Eingang in der Loxone-Projektdatei bleibt bestehen."
 echo "<INFO> Dort muss die Adresse wieder auf die Station selbst zeigen, sonst"
 echo "<INFO> laeuft der Behaelter ins Leere."
+echo "<INFO> Die Virtuellen Eingaenge ecowittweiche_... (bzw. mit Ihrem Praefix) in Loxone bleiben"
+echo "<INFO> ebenfalls bestehen; sie bekommen keine Werte mehr."
 exit 0

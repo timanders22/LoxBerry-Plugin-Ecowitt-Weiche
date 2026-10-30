@@ -2580,6 +2580,99 @@ function ew_pruef_mqtt_abo($c = null)
     return array('fehl', sprintf(ew_t($da ? 'TEST.ABO_FALSCH' : 'TEST.ABO_FEHLT'), $soll));
 }
 
+/**
+ * Nachtwelle N3 (0.9.26): die angehakten Datenpunkte aus config/system/subscriptions.json des MQTT-Gateways V2
+ * (Subscriptions[].Id je Thema, Noncached; Form wie Govee gv_mqtt_v2_haken_lage(), MGiSmart mg_v2_abos()). Rein.
+ * Rueckgabe array(Thema => Noncached bool), null = keine JSON-Daten. Ohne Liste in der Datei: leer (nichts angehakt).
+ */
+function ew_mqtt_v2_abos($daten)
+{
+    if (!is_array($daten)) { return null; }
+    $liste = array();
+    foreach (array('Subscriptions', 'subscriptions') as $s) {
+        if (isset($daten[$s]) && is_array($daten[$s])) { $liste = $daten[$s]; break; }
+    }
+    $abo = array();
+    foreach ($liste as $e) {
+        if (!is_array($e)) { continue; }
+        $id = '';
+        foreach (array('Id', 'id', 'Topic', 'topic') as $k) {
+            if (isset($e[$k]) && is_string($e[$k])) { $id = trim($e[$k]); break; }
+        }
+        if ($id === '') { continue; }
+        $nc = false;
+        foreach (array('Noncached', 'noncached') as $k) {
+            if (isset($e[$k]) && is_scalar($e[$k])) {
+                $nc = ($e[$k] === true || in_array(strtolower(trim((string) $e[$k])), array('1', 'true', 'yes', 'on'), true));
+                break;
+            }
+        }
+        $abo[$id] = !empty($abo[$id]) || $nc;
+    }
+    return $abo;
+}
+
+/**
+ * Nachtwelle N3 (0.9.26): Soll gegen Ist (Rein). Soll kommt aus ew_mqtt_namen() - derselben Liste wie die Hakenliste
+ * im Reiter Einbindung, Schritt 2: die Klasse kern immer, wahl/batterie/batterie_wahl nur, wenn die Station das Thema
+ * geliefert hat ($geliefert = die Themen aus takt.json 'letzte'; "wer einen Sensor nicht hat, hakt ihn nicht an"),
+ * weitere (status/ts) nie. "Noncached" braucht kein Datenpunkt (Reiter Einbindung) - traegt einer es trotzdem, steht
+ * er in nc_zuviel[] und ist ein Fehler (Hausform wie MGiSmart 1.1.28 mg_v2_haken_abgleich(), Vereinheitlichung
+ * 29.10.2026). Rueckgabe array(ok bool, fehlt[], angehakt, soll, davon kern, nc_zuviel[]).
+ */
+function ew_mqtt_v2_abgleich(array $namen, array $abo, $praefix, array $geliefert)
+{
+    $fehlt = array();
+    $zuviel = array();
+    $da = 0;
+    $soll = 0;
+    $kern = 0;
+    foreach ($namen as $e) {
+        if ($e['klasse'] === 'weitere') { continue; }
+        if ($e['klasse'] !== 'kern' && !in_array($e['thema'], $geliefert, true)) { continue; }
+        $soll++;
+        if ($e['klasse'] === 'kern') { $kern++; }
+        $t = $praefix . '/' . $e['thema'];
+        if (!array_key_exists($t, $abo)) { $fehlt[] = $t; continue; }
+        $da++;
+        if ($abo[$t]) { $zuviel[] = $t; }   // kein Datenpunkt braucht Noncached
+    }
+    return array(!$fehlt && !$zuviel, $fehlt, $da, $soll, $kern, $zuviel);
+}
+
+/** (3b) Nachtwelle N3 (0.9.26): unter Gateway V2 alle Datenpunkte der Hakenliste angehakt? Liest nur general.json
+ *  (ew_mqtt_gateway()), takt.json und config/system/subscriptions.json. Rueckgabe array(ok|fehl|hinweis, Text);
+ *  hinweis = trifft nicht zu (Gateway V1, MQTT aus) oder nicht feststellbar. */
+function ew_pruef_mqtt_v2($c = null)
+{
+    $gw = ew_mqtt_gateway();
+    if ($gw['fassung'] === 0) {
+        return array('hinweis', ew_t('TEST.V2_UNKLAR'));
+    }
+    if ($gw['fassung'] < 2) {
+        return array('hinweis', ew_t('TEST.V2_V1'));
+    }
+    if (!is_array($c) || empty($c['mqtt_ein'])) {
+        return array('hinweis', ew_t('TEST.TAKT_AUS'));
+    }
+    $abo = ew_mqtt_v2_abos(ew_json_lesen(ew_paths()['lbhome'] . '/config/system/subscriptions.json'));
+    if ($abo === null) {
+        return array('hinweis', ew_t('TEST.V2_UNKLAR_DATEI'));
+    }
+    $t = ew_takt_lesen();
+    $geliefert = (isset($t['letzte']) && is_array($t['letzte'])) ? array_map('strval', array_keys($t['letzte'])) : array();
+    list($ok, $fehlt, $da, $soll, $kern, $zuviel) = ew_mqtt_v2_abgleich(ew_mqtt_namen($c), $abo, ew_mqtt_praefix($c), $geliefert);
+    if ($soll === 0) {
+        return array('hinweis', ew_t('TEST.V2_LEER'));   // leere Hakenliste: kein Urteil
+    }
+    if ($ok) {
+        return array('ok', sprintf(ew_t('TEST.V2_OK'), $soll, $kern, $soll - $kern));
+    }
+    return array('fehl', sprintf(ew_t('TEST.V2_FEHLT'), $da, $soll, !$fehlt ? '-' : (count($fehlt) > 10
+        ? implode(', ', array_slice($fehlt, 0, 10)) . ' … (+' . (count($fehlt) - 10) . ')' : implode(', ', $fehlt)))
+        . ($zuviel ? '; ' . sprintf(ew_t('TEST.V2_NC_ZUVIEL'), implode(', ', $zuviel)) : ''));
+}
+
 /** (4) Einheiten der Station: nur ein Hinweis. */
 function ew_pruef_mqtt_einheiten()
 {

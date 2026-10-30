@@ -1289,6 +1289,9 @@ $ew_r = ew_pruef_mqtt_http();
 $ew_selbst[] = array('was' => ew_t('TEXT.S_MQTT_HTTP'), 'lage' => $ew_r[0], 'wie' => $ew_r[1]);
 $ew_r = ew_pruef_mqtt_abo($ew_cfg);
 $ew_selbst[] = array('was' => ew_t('TEXT.S_MQTT_ABO'), 'lage' => $ew_r[0], 'wie' => $ew_r[1]);
+/* Nachtwelle N3 (0.9.26): unter Gateway V2 die Haken der Hakenliste gegen config/system/subscriptions.json. */
+$ew_r = ew_pruef_mqtt_v2($ew_cfg);
+$ew_selbst[] = array('was' => ew_t('TEXT.S_MQTT_V2'), 'lage' => $ew_r[0], 'wie' => $ew_r[1]);
 $ew_r = ew_pruef_mqtt_einheiten();
 $ew_selbst[] = array('was' => ew_t('TEXT.S_MQTT_EINHEIT'), 'lage' => $ew_r[0], 'wie' => $ew_r[1]);
 

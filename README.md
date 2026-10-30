@@ -1,6 +1,6 @@
 # LoxBerry-Plugin „Ecowitt-Weiche"
 
-Version 0.9.25
+Version 0.9.26
 
 Holt die Messwerte einer Ecowitt-Wetterstation über **zwei** Netzwerkschnittstellen
 und reicht die Antwort derjenigen durch, die gerade trägt. In der Loxone-Projektdatei
@@ -15,6 +15,17 @@ Werte auf Wunsch auch jede Minute über MQTT in Virtuelle Eingänge – der Weg 
 * Schaltet nichts, misst nichts, speichert keine Messwerte zwischen.
 * Liefert die Vorlagen für Loxone Config (Zustandsbehälter und Beispiel-Stationsbehälter) und drei
   Baustein-Listen aus dem gemeinsamen Musterprojekt, je mit Bild und Schritt-für-Schritt-Anleitung.
+
+## Neu in 0.9.26
+
+Pflegefassung der Nachtwelle (29.10.2026), ohne neue Funktion und ohne Änderung an Weiche, HTTP oder MQTT:
+
+* **Selbsttest MQTT-Gateway V2:** Die Selbstprüfung im Reiter *Test* hat eine neue Zeile „Alle Datenpunkte im
+  Gateway angehakt (Gateway V2)“. Sie liest `config/system/subscriptions.json` und nennt jedes Thema der Hakenliste
+  (Reiter *Einbindung in Loxone*, Schritt 2), das im Gateway nicht angehakt ist – die festen immer, die wahlweisen
+  und die Batterien nur, wenn Ihre Station sie schon einmal geliefert hat. „Noncached“ braucht weiter kein
+  Datenpunkt. Unter Gateway V1 oder bei ausgeschaltetem MQTT „trifft nicht zu“.
+* Unverändert: kein Befehlsweg, kein Sprachmodul.
 
 ## Neu in 0.9.25
 

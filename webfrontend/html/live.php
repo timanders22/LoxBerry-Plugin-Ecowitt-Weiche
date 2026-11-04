@@ -71,7 +71,9 @@ if ($ew_soll !== '') {
 
 /* Selbsttest fuer den Reiter Test: Token und Konfiguration stimmen, der
    Endpunkt laeuft. Keine Station, kein Schreiben. */
-if (isset($_GET['selftest'])) {
+/* 0.9.27 (Nachzug 01.11.2026, wie Renault NG 2.1.23): !empty statt isset - bis 0.9.26 galt auch ?selftest=0 und ?selftest= als Selbsttest,
+ * und eine Adresse mit diesem Anhang tat nie etwas anderes. */
+if (!empty($_GET['selftest'])) {
     header('Content-Type: text/plain; charset=utf-8');
     echo 'SELFTEST;OK=1;TOKEN=' . ($ew_soll !== '' ? 'OK' : 'OHNE') . "\n";
     exit;

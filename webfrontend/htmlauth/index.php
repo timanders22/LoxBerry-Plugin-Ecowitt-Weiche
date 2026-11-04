@@ -173,6 +173,19 @@ function ew_feld($name)
  * (Pruefer oberflaeche, Befund 4). Jetzt werden ALLE Beanstandungen
  * gesammelt, und bei einer einzigen wird GAR NICHTS gespeichert. Leer
  * heisst bei Wartezeit und Pfad: die Vorgabe - und das wird gesagt. */
+/* Sprachansagen, eigenes Formular. Die Testansage spricht immer. */
+if ($ew_post && isset($_POST['ansage_test'])) {
+    list($ew_at, $ew_ag) = ew_ansage_test();
+    if ($ew_at) { $ew_hinweise[] = ew_t('ANSAGEPLUGIN.M_TEST_OK'); } else { $ew_fehler[] = ew_t('ANSAGEPLUGIN.M_TEST_FEHL') . ' ' . $ew_ag; }
+    $ew_tab = 'tab-settings';
+}
+if ($ew_post && isset($_POST['ansage_speichern'])) {
+    list($ew_ao, $ew_af, $ew_ah) = ew_ansage_post($_POST);
+    if ($ew_af) { foreach ($ew_af as $ew_ax) { $ew_fehler[] = $ew_ax; } }
+    elseif ($ew_ao) { $ew_hinweise[] = trim(ew_t('ANSAGEPLUGIN.M_OK') . ' ' . implode(' ', $ew_ah)); }
+    else { $ew_fehler[] = ew_t('ANSAGEPLUGIN.M_FEHL'); }
+    $ew_tab = 'tab-settings';
+}
 if ($ew_post && isset($_POST['speichern'])) {
     $ew_neu = $ew_cfg;
     $ew_mangel = array();
@@ -346,7 +359,7 @@ if ($ew_post && isset($_POST['ew_sichern'])) {
     /* X-3 (Verbesserungsbau 01.10.2026): bestuende ein gespeicherter Wert das
        eigene Zurueckspielen nicht, sagt es der Kopf der Datei - mit den
        NAMEN, nie den Werten. Geliefert wird trotzdem, vollstaendig. */
-    $ew_sich = ew_config();
+    $ew_sich = ew_ansage_fuer_sicherung(ew_config());     // nie ein Sprechtoken
     $ew_altw = ew_rueckspiel_altwerte($ew_sich);
     if ($ew_altw) {
         $ew_sich = array('_warnung' => sprintf(ew_t('TEXT.SICH_ALTWERT_KOPF'), implode(', ', $ew_altw))) + $ew_sich;
@@ -689,6 +702,7 @@ if (ew_wartezeit_zu_lang($ew_cfg)) { ?>
 <p class="sm-hilfe"><?php echo ew_t('TEXT.TOKEN_KNOEPFE'); ?></p>
 </form>
 
+<?= ew_ansage_form_html(ew_fmt() . '<input data-role="none" type="hidden" name="activetab" value="tab-settings">') ?>
 <h2><?= ew_t('TEXT.H_SICHERUNG') ?></h2>
 <div class="sm-hinweis"><?= ew_t('TEXT.SICH_ERKLAERUNG') ?></div>
 <div class="sm-warnung"><?= ew_t('TEXT.SICH_WARNUNG') ?></div>

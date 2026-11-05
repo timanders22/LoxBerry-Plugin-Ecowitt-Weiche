@@ -367,6 +367,7 @@ if ($ew_post && isset($_POST['ew_sichern'])) {
     $ew_js = json_encode($ew_sich,
         JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     if ($ew_js !== false) {
+        while (ob_get_level() > 0) { @ob_end_clean(); }
         header('Content-Type: application/json; charset=utf-8');
         header('Content-Disposition: attachment; filename="ecowitt_einstellungen_'
                . date('Ymd_His') . '.json"');
@@ -436,6 +437,7 @@ if ($ew_post && isset($_POST['ew_zurueck'])) {
 if ($ew_post && (isset($_POST['vorlage_zustand']) || isset($_POST['vorlage_wetter']))) {
     $ew_vl = isset($_POST['vorlage_zustand']) ? ew_vorlage_zustand(ew_rechner(), $ew_cfg)
                                                : ew_vorlage_wetter(ew_rechner(), $ew_cfg);
+    while (ob_get_level() > 0) { @ob_end_clean(); }
     header('Content-Type: application/xml; charset=utf-8');
     header('Content-Disposition: attachment; filename="' . $ew_vl[0] . '"');
     echo $ew_vl[1];

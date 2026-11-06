@@ -1,6 +1,6 @@
 # LoxBerry-Plugin „Ecowitt-Weiche"
 
-Version 0.9.29
+Version 0.9.30
 
 Holt die Messwerte einer Ecowitt-Wetterstation über **zwei** Netzwerkschnittstellen
 und reicht die Antwort derjenigen durch, die gerade trägt. In der Loxone-Projektdatei
@@ -15,6 +15,10 @@ Werte auf Wunsch auch jede Minute über MQTT in Virtuelle Eingänge – der Weg 
 * Schaltet nichts, misst nichts, speichert keine Messwerte zwischen.
 * Liefert die Vorlagen für Loxone Config (Zustandsbehälter und Beispiel-Stationsbehälter) und drei
   Baustein-Listen aus dem gemeinsamen Musterprojekt, je mit Bild und Schritt-für-Schritt-Anleitung.
+
+## Neu in 0.9.30
+
+- Gemeinsames Sprachmodul 1.4.2: Wird eine Ansage bewusst nicht gesprochen (gerade eben schon gesagt, gesperrt oder Ruhezeit), steht das im Protokoll jetzt so – und nicht mehr als Fehler.
 
 ## Neu in 0.9.29
 

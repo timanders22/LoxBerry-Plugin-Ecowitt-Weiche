@@ -79,5 +79,8 @@ if (isset($argv[1]) && $argv[1] === '--selbsttest') {
     exit($ew_fehl ? 1 : 0);
 }
 
+/* 0.9.32 (Regeln/05): fehlende Vorgaben einmal in ecowitt.json schreiben - vor ew_takt() und damit vor dem ersten
+   Lesen der Konfiguration in diesem Lauf. Waehrend einer Aktualisierung (Marke) schreibt die Funktion nichts. */
+ew_config_vervollstaendigen();
 ew_takt();
 exit(0);

@@ -734,6 +734,92 @@ function ew_config_speichern(array $c, &$zweit = null)
     return true;
 }
 
+/** Leere Objekte des Rohtextes ($o, json_decode ohne true) im Feld $a wieder als Objekt fuehren (seit 0.9.32),
+ *  damit json_encode() sie als {} und nicht als [] schreibt. Nur fuer ew_config_vervollstaendigen(). */
+function ew_json_leere_objekte($a, $o)
+{
+    if (!is_array($a)) { return $a; }
+    if (is_object($o)) {
+        if (!get_object_vars($o) && $a === array()) { return new stdClass(); }
+        foreach ($a as $k => $v) {
+            $ks = (string) $k;
+            if (is_array($v) && property_exists($o, $ks)) { $a[$k] = ew_json_leere_objekte($v, $o->$ks); }
+        }
+    } elseif (is_array($o)) {
+        foreach ($a as $k => $v) {
+            if (is_array($v) && array_key_exists($k, $o)) { $a[$k] = ew_json_leere_objekte($v, $o[$k]); }
+        }
+    }
+    return $a;
+}
+
+/**
+ * Fehlende Vorgaben EINMAL in ecowitt.json schreiben (seit 0.9.32, Regeln/05).
+ *
+ * Bis 0.9.31 ergaenzte ew_config() fehlende Schluessel nur im Speicher. Geschrieben wurde die Datei nur beim
+ * ersten Wortzeichen und - nur aus der Oberflaeche, ew_config(true) - wenn mqtt_ein fehlte; dieser Weg schreibt
+ * die aufbereiteten Vorgabenschluessel und laesst fremde fallen. Er bleibt unveraendert; wer zuerst kommt, ist
+ * jetzt der Minutentakt (bin/ew_takt.php, vor ew_takt() und damit vor dem ersten Lesen der Konfiguration).
+ * Weil nur bei FEHLENDEN Schluesseln geschrieben wird, bleibt es bei einem Schreibvorgang.
+ *
+ * - Nur mit LoxBerry-Wurzel, nicht waehrend einer Aktualisierung (dieselbe Marke und Frist wie ew_takt(): Datei
+ *   data/plugins/<ordner>.upgrade_laeuft, juenger als EW_MARKE_FRIST), und nur, wenn ecowitt.json ein Objekt ist
+ *   und ein nicht leeres, taugliches Wortzeichen traegt (ew_token_taugt()). Eine fehlende, kaputte oder leere
+ *   Datei ist Sache der Selbstheilung; eine Anlage mit bewusst geleertem Wortzeichen wird hier nicht angefasst.
+ * - Geschrieben werden die WERTE AUS DER DATEI plus die fehlenden Vorgaben, nicht die von ew_config()
+ *   aufbereiteten (Wartezeit begrenzt, Schalter auf 0/1); fremde Schluessel bleiben stehen.
+ * - Lese-Regel (Gruppe 3, E3): eine Bestandsdatei ohne mqtt_ein liest ew_config() als 0 (MQTT aus). Genau dieser
+ *   Wert wird geschrieben, nicht die Vorgabe 1 einer Neuinstallation - sonst schaltete das Nachtragen MQTT ein.
+ * - Nur die Schluessel aus ew_vorgaben() - genau die, die das Speichern im Formular schreibt. Geschrieben wird
+ *   ueber ew_config_speichern() (0600, Zweitschrift wie beim Speichern).
+ * - Genau eine Protokollzeile mit den Namen, nie mit Werten.
+ *
+ * Rueckgabe: array('stand' => ruht|ohne_datei|ohne_merkwort|vollstaendig|ergaenzt|fehler, 'schluessel' => array())
+ */
+function ew_config_vervollstaendigen()
+{
+    $p = ew_paths();
+    if ($p['lbhome'] === '' || $p['datadir'] === '' || $p['cfgdatei'] === '') {
+        return array('stand' => 'ruht', 'schluessel' => array());
+    }
+    $marke = dirname($p['datadir']) . '/' . $p['plugin'] . '.upgrade_laeuft';
+    clearstatcache(true, $marke);
+    if (is_file($marke) && abs(time() - (int) @filemtime($marke)) < EW_MARKE_FRIST) {
+        return array('stand' => 'ruht', 'schluessel' => array());
+    }
+    clearstatcache(true, $p['cfgdatei']);
+    if (!is_file($p['cfgdatei'])) {
+        return array('stand' => 'ohne_datei', 'schluessel' => array());
+    }
+    $roh = @file_get_contents($p['cfgdatei']);
+    $datei = is_string($roh) ? json_decode($roh, true) : null;
+    if (!is_array($datei) || !isset($datei['token']) || !ew_token_taugt($datei['token']) || $datei['token'] === '') {
+        return array('stand' => 'ohne_merkwort', 'schluessel' => array());
+    }
+    $fehlend = array();
+    foreach (ew_vorgaben() as $k => $w) {
+        if (!array_key_exists($k, $datei)) {
+            // Lese-Regel E3 (ew_config()): Wortzeichen schon geschrieben, mqtt_ein fehlt -> MQTT aus.
+            $datei[$k] = ($k === 'mqtt_ein') ? 0 : $w;
+            $fehlend[] = $k;
+        }
+    }
+    if (!$fehlend) {
+        return array('stand' => 'vollstaendig', 'schluessel' => array());
+    }
+    // Ein leeres Objekt der Datei ({}) bliebe nach json_decode(..., true) ein leeres Feld und kaeme als []
+    // zurueck - der Rohwert wird erhalten.
+    $datei = ew_json_leere_objekte($datei, json_decode($roh));
+    if (!ew_config_speichern($datei)) {
+        ew_log('Konfiguration NICHT vervollstaendigt: ecowitt.json liess sich nicht schreiben ('
+             . count($fehlend) . ' fehlende Schluessel).');
+        return array('stand' => 'fehler', 'schluessel' => $fehlend);
+    }
+    ew_log('Konfiguration vervollstaendigt - ' . count($fehlend)
+         . ' fehlende Vorgaben in ecowitt.json geschrieben: ' . implode(', ', $fehlend));
+    return array('stand' => 'ergaenzt', 'schluessel' => $fehlend);
+}
+
 function ew_token_erzeugen()
 {
     $b = @random_bytes(16);

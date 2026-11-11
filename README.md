@@ -1,6 +1,6 @@
 # LoxBerry-Plugin „Ecowitt-Weiche"
 
-Version 0.9.31
+Version 0.9.32
 
 Holt die Messwerte einer Ecowitt-Wetterstation über **zwei** Netzwerkschnittstellen
 und reicht die Antwort derjenigen durch, die gerade trägt. In der Loxone-Projektdatei
@@ -15,6 +15,12 @@ Werte auf Wunsch auch jede Minute über MQTT in Virtuelle Eingänge – der Weg 
 * Schaltet nichts, misst nichts, speichert keine Messwerte zwischen.
 * Liefert die Vorlagen für Loxone Config (Zustandsbehälter und Beispiel-Stationsbehälter) und drei
   Baustein-Listen aus dem gemeinsamen Musterprojekt, je mit Bild und Schritt-für-Schritt-Anleitung.
+
+## Neu in 0.9.32
+
+- **Konfiguration wird nach einem Update vervollständigt:** Fehlen in `ecowitt.json` Einstellungen, die eine neuere Fassung mitbringt, trägt der Minutentakt (`bin/ew_takt.php`) sie jetzt einmal in die Datei ein, bevor er die Konfiguration liest – auch wenn MQTT aus ist. Geschrieben wird über denselben Weg wie beim Speichern im Formular (`ew_config_speichern()`, Rechte 0600, Zweitschrift daneben); das Protokoll `ecowitt.log` nennt die ergänzten Namen in einer Zeile, keine Werte. Bisher ergänzte das Plugin fehlende Einstellungen nur beim Lesen; in die Datei kamen sie erst beim nächsten Speichern, beim ersten Wortzeichen oder – nur beim Öffnen der Oberfläche – wenn `mqtt_ein` fehlte.
+- Fehlt `mqtt_ein` in einer bestehenden Konfiguration, wird wie bisher beim Lesen „MQTT aus“ (0) eingetragen, nicht die Vorgabe einer Neuinstallation; ein Update schaltet MQTT also weiterhin nicht ein. Geschrieben werden die Werte aus der Datei, wie sie dort stehen (eine Wartezeit über 3 Sekunden bleibt so eingetragen, gelesen wird sie wie bisher begrenzt), plus die fehlenden Vorgaben; Schlüssel, die das Plugin nicht kennt, bleiben stehen. Nicht angefasst werden eine fehlende oder unlesbare `ecowitt.json`, eine ohne Wortzeichen oder mit bewusst geleertem Wortzeichen und jede Datei während einer Aktualisierung.
+- Gemessen im Prüfstand auf dem Arbeitsrechner unter PHP 7.4 und 8.4, einschließlich eines Laufs von `bin/ew_takt.php` in einem nachgebildeten LoxBerry-Baum; am Gerät ist es noch nicht gemessen.
 
 ## Neu in 0.9.31
 

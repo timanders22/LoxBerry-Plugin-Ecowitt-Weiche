@@ -1,6 +1,6 @@
 # LoxBerry-Plugin „Ecowitt-Weiche"
 
-Version 0.9.32
+Version 0.9.33
 
 Holt die Messwerte einer Ecowitt-Wetterstation über **zwei** Netzwerkschnittstellen
 und reicht die Antwort derjenigen durch, die gerade trägt. In der Loxone-Projektdatei
@@ -15,6 +15,11 @@ Werte auf Wunsch auch jede Minute über MQTT in Virtuelle Eingänge – der Weg 
 * Schaltet nichts, misst nichts, speichert keine Messwerte zwischen.
 * Liefert die Vorlagen für Loxone Config (Zustandsbehälter und Beispiel-Stationsbehälter) und drei
   Baustein-Listen aus dem gemeinsamen Musterprojekt, je mit Bild und Schritt-für-Schritt-Anleitung.
+
+## Neu in 0.9.33
+
+- **Ausfallansage berichtigt:** Die Ansage sagte „Die Wetterstation liefert seit fünf Minuten keine Werte.“ Das stimmt, wenn die Station gar nicht antwortet. Liefert sie dagegen eingefrorene Werte, gilt sie erst nach 15 Minuten ohne frischen Wert als ausgefallen, und die Ansage kommt fünf Minuten danach. Der Satz lautet jetzt „… seit mindestens fünf Minuten keine frischen Werte.“ Sonst ändert sich nichts.
+- **Dokumentiert: andere Plugins lesen die Weiche.** Bewässerung, Beschattungswächter und Weatherdata holen `live.php` über `127.0.0.1` und lesen die Felder des Stations-JSON nach ihrer Kennung (etwa `0x10`, `0x15`); Weatherdata liest dazu das Aktionstoken aus `config/plugins/<ordner>/ecowitt.json`, Schlüssel `token`. Wer an der Weiche den Aufbau von `live.php`, den Dateinamen oder diesen Schlüssel ändert, ändert damit auch diese drei Plugins.
 
 ## Neu in 0.9.32
 

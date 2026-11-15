@@ -1,5 +1,9 @@
 <?php
 require_once __DIR__ . '/sprachausgabe.php';     // Stamm, fuer die Vorgaben der Sprachansagen schon beim ersten Lesen der Konfiguration
+/* Gemeinsames Sicherungsmodul (Abschrift von Werkzeuge/gemeinsam/sicherung.php, seit 0.9.34): "Einstellungen
+ * sichern" und "Einstellungen zurueckspielen" verhalten sich in allen Plugins des Hauses gleich. Liegt neben
+ * dieser Datei und schuetzt sich selbst gegen doppeltes Laden. */
+require_once __DIR__ . '/sicherung.php';
 /**
  * Ecowitt-Weiche - gemeinsamer Unterbau
  *
@@ -478,7 +482,7 @@ function ew_wert_pruefen($k, $w)
     case 'timeout':
         /* k2: eine Sicherung aus 0.9.17 und frueher (Vorgabe 4 s) muss
          * zurueckspielbar bleiben - die Grenze der damaligen Fassungen gilt
-         * hier weiter; ew_sicherung_lesen() gibt den Hinweis. */
+         * hier weiter; ew_sicherung_nachziehen() gibt den Hinweis. */
         $wert = ew_timeout_wert($w, EW_WARTEZEIT_LESBAR);
         $ok = $wert !== null;
         break;
@@ -1371,45 +1375,6 @@ function ew_stand_lesen()
 }
 
 
-/**
- * Eine Sicherungsdatei einlesen - und dabei NICHTS durchgehen lassen.
- *
- * Die sieben Punkte aus REGELN_2, und der wichtigste ist der dritte: eine
- * halb gueltige Datei ueberschreibt GAR NICHTS. Wer eine Sicherung
- * zurueckspielt, will entweder den ganzen Stand oder gar keinen - eine zur
- * Haelfte uebernommene Konfiguration ist schlimmer als die alte, und man
- * sieht es ihr nicht an.
- *
- * Unbekannte Schluessel sind eine Beanstandung, kein stiller Verlust: sie
- * stammen aus einer anderen Fassung oder einem anderen Plugin.
- *
- * JEDER WERT wird wie beim Speichern geprueft (ew_wert_pruefen). Bis 0.9.14
- * stand hier "$neu[$k] = $w;" ohne Pruefung (Bauart E, Pruefer code und
- * oberflaeche, gemessen unter 7.4, 8.4 und 8.5): ein Wortzeichen als Liste
- * wurde gespeichert, live.php nahm danach token=Array an, die Oberflaeche
- * starb unter PHP 8 mit einem TypeError, und mit Zweitschrift heilte
- * ew_config() den Stand im selben Aufruf zurueck, waehrend die Seite
- * "uebernommen" meldete. Adresse "http://...", Pfad ohne /, timeout 999 und
- * pruefe_wert "nein" gingen ebenso durch.
- *
- * Ein LEERES Wortzeichen ist zulaessig - "ohne Wortzeichen" ist ein
- * gewollter Zustand (live.php-Kopf; Regeln/05, VolkswagenID 03.09.2026:
- * ein zu enges Muster weist die eigene Sicherung ab). Es kommt aber nie
- * still: der vierte Rueckgabewert traegt dann einen Hinweis, den die
- * Oberflaeche zeigt.
- *
- * Maskiert wird hier nichts; das tut einmal die Ausgabe (ew_e). Bis 0.9.14
- * stand hier htmlspecialchars, und die Seite zeigte "&lt;b&gt;" (Pruefer
- * oberflaeche, Befund 3).
- *
- * Rueckgabe: array(Konfiguration|null, Beanstandungen[], uebernommene Werte,
- * Hinweise[]).
- *
- * X-3 (Verbesserungsbau 01.10.2026): $namen sammelt die NAMEN der
- * beanstandeten Schluessel (nie ihre Werte) fuer die Warnung beim Sichern.
- * Schluessel, die mit "_" beginnen, sind Kopfzeilen (etwa "_warnung" der
- * eigenen Sicherung) und werden uebergangen.
- */
 /** Die Schluessel der Sprachansagen in der Hauptkonfiguration. */
 function ew_ansage_schluessel()
 {
@@ -1444,48 +1409,6 @@ function ew_ansage_wert($k, $w)
             return in_array($w, array(0, 1, '0', '1'), true);
     }
     return false;
-}
-
-/** Fuer die Sicherung: nie ein Sprechtoken, nie der Herkunftsvermerk. Ausgabeart, Ziele, Regeln und Haken reisen mit. */
-function ew_ansage_fuer_sicherung(array $c)
-{
-    unset($c['ansage_token_herkunft'], $c['ansage_aus_datei']);
-    if (isset($c['tts']) && is_array($c['tts'])) { $c['tts'] = ansage_sicherung_bereinigen($c['tts']); }
-    return $c;
-}
-
-/**
- * Vor dem Zurueckspielen. Eine Datei mit Sprechtoken wird abgewiesen (der Block wird unbrauchbar gemacht, die Wertpruefung nennt ihn). Die geltenden Token und der Vermerk bleiben.
- * Fehlt ein Schluessel (Sicherung einer aelteren Fassung), gilt der geltende Wert: Ein bewusstes AUS geht beim Zurueckspielen nicht verloren.
- */
-function ew_ansage_sicherung_vor($roh)
-{
-    $d = json_decode((string) $roh, true);
-    if (!is_array($d)) { return $roh; }
-    $inhalt = false;
-    foreach (array_keys($d) as $k) { if ((string) $k !== '' && ((string) $k)[0] !== '_') { $inhalt = true; } }
-    if (!$inhalt) { return $roh; }
-    $j = ew_ansage_cfg();
-    unset($d['ansage_token_herkunft'], $d['ansage_aus_datei']);
-    $jt = isset($j['tts']) && is_array($j['tts']) ? $j['tts'] : array();
-    if (array_key_exists('tts', $d)) {
-        $g = '';
-        $p = is_array($d['tts']) ? ansage_wert_pruefen($d['tts'], $g, ew_ansage_modi()) : null;
-        if (ansage_sicherung_mangel($d['tts']) || $p === null) {
-            $d['tts'] = 'ABGEWIESEN';
-        } else {
-            list($tv) = ansage_vervollstaendigen($p, 'aus');
-            $d['tts'] = ansage_sicherung_tokens_behalten($tv, $jt);
-        }
-    } else {
-        $d['tts'] = ew_tts($j);
-    }
-    foreach (array_diff(ew_ansage_schluessel(), array('tts', 'ansage_token_herkunft', 'ansage_aus_datei')) as $k) {
-        if (!array_key_exists($k, $d) && array_key_exists($k, $j)) { $d[$k] = $j[$k]; }
-    }
-    $d['ansage_token_herkunft'] = isset($j['ansage_token_herkunft']) && is_array($j['ansage_token_herkunft']) ? $j['ansage_token_herkunft'] : array();
-    $d['ansage_aus_datei'] = 1;
-    return (string) json_encode($d);
 }
 
 /**
@@ -1865,114 +1788,251 @@ function ew_ansage_flanke($anlass, $gestoert, $name = '', $frist = 0, $jetzt = n
     return ew_ansage_legen(array($ein));
 }
 
-function ew_sicherung_lesen($roh, &$namen = null)
+/**
+ * 0.9.34: Die Beschreibung dieser Linie fuer das gemeinsame Sicherungsmodul
+ * (Werkzeuge/gemeinsam/sicherung.php, Auftrag des Hausherrn 12.11.2026). Lesen,
+ * Pruefen und Zurueckspielen macht das Modul; bis 0.9.33 stand hier eine eigene
+ * Schleife (ew_sicherung_lesen()): die Sicherung trug gar keinen Kopf, eine
+ * fremde Datei wurde nur an ihren unbekannten Schluesseln erkannt, ein
+ * unbekannter Schluessel oben oder in einem Block (Sprachansagen) wies die ganze
+ * Datei ab, und ein leerer Wert ueberschrieb den bestehenden (gemessen 14.11.2026
+ * an 0.9.33 mit Werkzeuge/sicherung_pruefstand.py --profil ist).
+ *
+ * Seither: der Kopf traegt das Kennzeichen LoxBerry-Plugin-Ecowitt-Weiche (Name
+ * des Repositorys) und die Fassung; eine Datei mit fremdem oder ohne Kennzeichen
+ * wird abgewiesen. Ausgenommen ist eine Sicherung bis 0.9.33, denn keine dieser
+ * Fassungen schrieb einen Kopf: ew_sicherung_alt_erkennen() erkennt sie an den
+ * Schluesseln, die jede von ihnen schrieb und die keine andere Linie zusammen
+ * fuehrt (Entscheidung des Hausherrn 14.11.2026 "Ja, erkennen", Regeln/05
+ * Regel 1; der Kopf _warnung allein taugte nicht, er kam nur bei beanstandeten
+ * Werten, und sein Text steht wortgleich in einem anderen Plugin). Unbekannte
+ * Schluessel oben und in den Bloecken werden verworfen und
+ * mit Namen gemeldet; ein leerer Wert ueberschreibt keinen bestehenden.
+ *
+ * Wie bisher: jeder Wert geht durch ew_wert_pruefen() (dieselbe Pruefung wie
+ * das Formular) und wird in dessen Normalform uebernommen, die Sprachansagen
+ * durch ew_ansage_wert() (eine Datei mit Sprechtoken wird abgewiesen); eine
+ * halb gueltige Datei aendert nichts, alle Beanstandungen werden gesammelt; ein
+ * fehlender Schluessel ist eine Beanstandung, ausser denen, die eine fruehere
+ * Fassung nicht kannte (ew_sicherung_spaete_schluessel()); der Vermerk
+ * ansage_token_herkunft und ansage_aus_datei kommen nie aus einer Datei.
+ * Maskiert wird erst bei der Ausgabe (ew_e()); der Knopf gibt dem Modul deshalb
+ * die Beschreibung mit 'e' = Klartext (ew_sicherung_klartext(), Regeln/05
+ * "Meldungen als Klartext"). Die Haken-Zeile bekommt diese Beschreibung
+ * unveraendert und bleibt maskiert.
+ */
+function ew_sicherung_beschreibung()
 {
-    $roh = ew_ansage_sicherung_vor($roh);     // Token und Vermerk bleiben die geltenden
-    $namen = array();
-    $mangel = array();
-    $hinweise = array();
-    $daten = json_decode((string) $roh, true);
-    if (!is_array($daten) || ($daten && array_keys($daten) === range(0, count($daten) - 1))) {
-        return array(null, array(ew_t('TEXT.SICH_KEIN_JSON')), 0, array());
+    $p = ew_paths();
+    $tts = array_merge(array_keys(ansage_werk_block()), ansage_geheim());
+    $schluessel = array(
+        'tts' => sicherung_block($tts, array('ziele' => sicherung_liste(array('art', 'wo', 'laut', 'sprache', 'ein'))))
+                 + array(
+                     'sichern' => 'ansage_sicherung_bereinigen',
+                     'pruefen' => function ($w, $k = '', $neu = null, $roh = null) {
+                         /* Eine Sicherung dieses Plugins traegt nie ein Sprechtoken - traegt die Datei eines, wird
+                          * sie abgewiesen. Gemessen am Block der DATEI, denn Regel 3 des Moduls setzt ein leeres
+                          * Feld vorher auf den geltenden Wert. */
+                         if (ansage_sicherung_mangel($roh) || ew_ansage_wert('tts', ansage_sicherung_bereinigen($w)) !== true) {
+                             return ew_t('ANSAGEPLUGIN.M_FEHL');
+                         }
+                         return '';
+                     },
+                     'wandeln' => function ($w) {
+                         $g = '';
+                         return ansage_wert_pruefen(ansage_sicherung_bereinigen($w), $g, ew_ansage_modi());
+                     }),
+        'ansage_regeln' => sicherung_block(array_keys(ansage_regeln_vorgaben())),
+        'ansage_haken' => sicherung_block(array('ausfall')),
+    );
+    /* Normalform wie bisher: Wartezeit und Schalter als Zahl (ew_wert_pruefen() gibt sie zurueck). */
+    foreach (array('timeout', 'pruefe_wert', 'mqtt_ein') as $s) {
+        $schluessel[$s] = array('wandeln' => function ($w) use ($s) {
+            list(, $v) = ew_wert_pruefen($s, $w);
+            return $v;
+        });
     }
-    $neu = ew_vorgaben();
-    $bekannt = array_keys($neu);
-    $anzahl = 0;
-    foreach ($daten as $k => $w) {
-        $k = (string) $k;
-        if ($k !== '' && $k[0] === '_') {
-            continue;
-        }
-        $ew_aw = ew_ansage_wert($k, $w);     // Sprachansagen: eigene Pruefung; Token und Vermerk bleiben die geltenden
-        if ($ew_aw !== null) {
-            if ($ew_aw) { $neu[$k] = $w; $anzahl++; } else { $mangel[] = ew_t('ANSAGEPLUGIN.M_FEHL'); $namen[] = (string) $k; }
-            continue;
-        }
-        if (!in_array($k, $bekannt, true)) {
-            $mangel[] = sprintf(ew_t('TEXT.SICH_FREMD'), ew_kurz($k, 60));
-            $namen[] = ew_kurz($k, 60);
-            continue;
-        }
-        list($ok, $wert, $grund) = ew_wert_pruefen($k, $w);
-        if (!$ok) {
-            $mangel[] = $grund;
-            $namen[] = $k;
-            continue;
-        }
-        $neu[$k] = $wert;
-        $anzahl++;
+    foreach (ew_sicherung_spaete_schluessel() as $s) {
+        if (!isset($schluessel[$s])) { $schluessel[$s] = array(); }
+        $schluessel[$s]['fehlt'] = 'behalten';
     }
-    if ($anzahl === 0) {
-        $mangel[] = ew_t('TEXT.SICH_LEER');
+    return array(
+        'kennzeichen' => 'LoxBerry-Plugin-Ecowitt-Weiche',
+        'hinweis' => ew_t('TEXT.SICH_KOPF'),
+        /* Die Fassung im Kopf kommt aus der Plugin-Datenbank bzw. plugin.cfg - keine fuenfte Stelle neben den
+         * vier, die Werkzeuge/fassung_setzen.py pflegt. */
+        'home' => (string) $p['lbhome'], 'ordner' => (string) $p['plugin'],
+        'plugin_cfg' => dirname(dirname(__DIR__)) . '/plugin.cfg',
+        'vorgaben' => ew_vorgaben(),
+        'schluessel' => $schluessel,
+        'nie_aus_datei' => array('ansage_token_herkunft', 'ansage_aus_datei'),
+        'uebersetzer' => 'ew_sicherung_alt_erkennen',
+        'pruefen' => function ($k, $w) {
+            $a = ew_ansage_wert($k, $w);
+            if ($a !== null) { return $a ? '' : ew_t('ANSAGEPLUGIN.M_FEHL'); }
+            list($ok, , $grund) = ew_wert_pruefen($k, $w);
+            return $ok ? '' : $grund;
+        },
+        'vorbereiten' => 'ew_sicherung_vorbereiten',
+        'jetzt' => 'ew_ansage_cfg',
+        't' => 'ew_t',
+    );
+}
+
+/**
+ * 0.9.34: Die Beschreibung fuer den Knopf "Einstellungen zurueckspielen": Meldungen
+ * des Moduls als Klartext ('e'), denn die Oberflaeche maskiert jede Meldung
+ * einmal bei der Ausgabe (ew_e()). Regeln/05 "Meldungen als Klartext".
+ */
+function ew_sicherung_klartext()
+{
+    return array('e' => function ($s) { return (string) $s; }) + ew_sicherung_beschreibung();
+}
+
+/**
+ * 0.9.34: Die Schluessel, die eine aeltere Sicherung dieser Linie noch nicht
+ * kennen konnte. Fehlen sie, behalten sie den geltenden Wert, und die Meldung
+ * nennt sie (Regeln/05 Punkt 6): MQTT (mqtt_ein, mqtt_praefix seit 0.9.25; bis
+ * 0.9.33 galt dann MQTT aus und das Praefix ab Werk) und die Sprachansagen (bis
+ * 0.9.33 setzte ew_ansage_sicherung_vor() sie still auf den geltenden Wert).
+ */
+function ew_sicherung_spaete_schluessel()
+{
+    return array('mqtt_ein', 'mqtt_praefix', 'tts', 'ansage_regeln', 'ansage_haken');
+}
+
+/**
+ * 0.9.34: Woran eine Sicherung bis 0.9.33 erkannt wird (Entscheidung des
+ * Hausherrn 14.11.2026, "Ja, erkennen"). Keine dieser Fassungen schrieb einen
+ * Kopf mit _plugin, jede aber diese sechs Schluessel. Gemessen 15.11.2026 mit
+ * dem Code aller 25 Vorfassungen 0.9.9 bis 0.9.33 (je drei Lagen, PHP 7.4 und
+ * 8.4, 150 Sicherungen: jede traegt alle sechs) und gegen 59 andere Linien
+ * (Vorgabenfunktionen, mitgelieferte Konfiguration, 107 Sicherungen ueber den
+ * Pruefstand, die Sicherungen aller Vorfassungen von FerienFeiertage): keine
+ * fuehrt mehr als einen davon zusammen. Belege im Pruefordner
+ * Pruefung-Ecowitt-Weiche-0.9.34/ohne_kopf/.
+ */
+function ew_sicherung_alt_merkmal()
+{
+    return array('primaer', 'ersatz', 'pfad', 'timeout', 'token', 'pruefe_wert');
+}
+
+/**
+ * 0.9.34: Die Kopfschluessel, die eine Fassung bis 0.9.33 schreiben konnte:
+ * _warnung (seit 0.9.16, bei einem Wert, den das eigene Zurueckspielen
+ * abwiese). Ein anderer Schluessel mit Unterstrich (_hinweis, _fassung, _stand)
+ * stammt aus einer Fassung mit Kopf, die immer _plugin schreibt - ohne _plugin
+ * ist eine solche Datei keine aeltere eigene.
+ */
+function ew_sicherung_alt_kopf()
+{
+    return array('_warnung');
+}
+
+/**
+ * 0.9.34: Der Uebersetzer fuer das Sicherungsmodul ('uebersetzer'; das Modul
+ * ruft ihn nur fuer eine Datei ohne _plugin). Angenommen wird sie nur, wenn
+ * jeder Schluessel aus ew_sicherung_alt_merkmal() oben steht und sie keinen
+ * anderen Kopfschluessel als die aus ew_sicherung_alt_kopf() traegt; die
+ * Meldung sagt dann "aeltere Sicherung erkannt" (Modultext K_ALT_ERKANNT).
+ * Sonst null, und das Modul weist die Datei als Ganzes ab. Umgeschrieben wird
+ * nichts. Rueckgabe: die Daten oder null.
+ */
+function ew_sicherung_alt_erkennen($d)
+{
+    if (!is_array($d) || array_key_exists('_plugin', $d)) { return null; }
+    foreach (array_keys($d) as $k) {
+        if (is_string($k) && $k !== '' && $k[0] === '_' && !in_array($k, ew_sicherung_alt_kopf(), true)) { return null; }
     }
-    /* FEHLENDE Schluessel sind eine Beanstandung, kein stiller Rueckfall.
-     *
-     * Bis hierher war die Vorgabenliste der Ausgangspunkt, und nur was in
-     * der Datei stand wurde darueber geschrieben. Eine Datei mit einem
-     * einzigen Schluessel lief damit ohne Beanstandung durch, wurde
-     * gespeichert, und alle uebrigen Einstellungen fielen auf Werk
-     * zurueck - quittiert mit "1 Wert uebernommen".
-     *
-     * Gemessen an VolkswagenID 0.9.11 am 03.09.2026 unter PHP 7.4 und 8.4:
-     * dort fiel dabei auch das Aktionstoken auf '', und jede im Miniserver
-     * eingetragene Adresse war stumm ungueltig. Am 07.09.2026 ueber den
-     * Bestand ausgerollt (30 Linien).
-     *
-     * Der Hausstandard sagt: eine halb gueltige Datei aendert gar nichts.
-     * Verglichen wird gegen die VORGABEN, nicht gegen $bekannt: was
-     * ausserhalb der Konfigurationsdatei liegt - Zugangsdaten in einer
-     * eigenen Datei - faellt nicht auf Werk zurueck und darf hier fehlen. */
-    $fehlend = array();
-    /* Gruppe 3 (0.9.25): mqtt_ein und mqtt_praefix sind "spaete" Schluessel. Eine Sicherung aus 0.9.24 traegt
-     * sie nicht und bleibt zurueckspielbar; es gilt dieselbe Regel wie beim Update: MQTT aus, Praefix ab Werk
-     * (Entwurf 2.7). Unbekannte Schluessel bleiben eine Beanstandung. */
-    if (!array_key_exists('mqtt_ein', $daten)) {
-        $neu['mqtt_ein'] = 0;
+    foreach (ew_sicherung_alt_merkmal() as $k) {
+        if (!array_key_exists($k, $d)) { return null; }
     }
-    foreach (array_keys(ew_vorgaben()) as $fk) {
-        if ($fk === 'mqtt_ein' || $fk === 'mqtt_praefix') {
-            continue;
-        }
-        if (!array_key_exists($fk, $daten)) {
-            $fehlend[] = $fk;
-        }
+    return $d;
+}
+
+/**
+ * 0.9.34: Vor dem Speichern (Rueckruf 'vorbereiten' des Moduls). Der Block tts
+ * wird wie bis 0.9.33 vervollstaendigt, und die geltenden Sprechtoken bleiben
+ * (die Sicherung traegt keine). Kam der Block nicht aus der Datei, steht dort
+ * schon der geltende. Die Vermerke ansage_token_herkunft und ansage_aus_datei
+ * behalten ihren geltenden Wert ('nie_aus_datei', Modul 1.2.1); der geltende
+ * Stand kommt aus ew_ansage_cfg() ('jetzt'), die eine liegengebliebene
+ * ansage.json aus der Probe vom 01.11. vorher einmal uebernimmt.
+ */
+function ew_sicherung_vorbereiten($neu, $jetzt, $r)
+{
+    if (!in_array('tts', $r['fehlt_behalten'], true) && isset($neu['tts']) && is_array($neu['tts'])) {
+        $jt = (is_array($jetzt) && isset($jetzt['tts']) && is_array($jetzt['tts'])) ? $jetzt['tts'] : array();
+        list($tv) = ansage_vervollstaendigen($neu['tts'], 'aus');
+        $neu['tts'] = ansage_sicherung_tokens_behalten($tv, $jt);
     }
-    if ($fehlend) {
-        $mangel[] = sprintf(ew_t('TEXT.SICH_FEHLEND'), count($fehlend), implode(', ', $fehlend));
-        $namen = array_merge($namen, $fehlend);
+    return $neu;
+}
+
+/**
+ * 0.9.34: Nach dem Zurueckspielen nachziehen und sagen, was geschah (Regeln/05).
+ * Rueckgabe: Hinweise (Texte aus der Sprachdatei, Klartext).
+ *  - Ohne Wortzeichen: der Endpunkt ist offen (wie bis 0.9.33). Ein leeres
+ *    Wortzeichen in der Datei behaelt seit 0.9.34 ein bestehendes (Regel 3 des
+ *    Moduls, die Meldung nennt es); ohne Wortzeichen bleibt es also nur, wenn
+ *    auch vorher keines gesetzt war.
+ *  - Eine Wartezeit, die Loxone nicht annimmt, wird uebernommen und gesagt (k2).
+ *  - Die Weiche hat keinen eigenen Dienst. Mit MQTT liest der Minutentakt die
+ *    Konfiguration bei jedem Lauf neu (ew_takt()); wie nach dem Speichern im
+ *    Reiter MQTT geht beim naechsten Lauf der volle Satz hinaus, und die
+ *    Abo-Datei fuer Gateway V1 folgt dem Praefix. Ohne MQTT liest live.php sie
+ *    bei jedem Abruf des Miniservers. Ein Neustart ist nicht noetig; das wird
+ *    gesagt.
+ */
+function ew_sicherung_nachziehen($neu, $jetzt, $r)
+{
+    $h = array();
+    if ((string) $neu['token'] === '') {
+        $h[] = ew_t('TEXT.SICH_OHNE_TOKEN');
     }
-    if (!$mangel && $neu['token'] === '') {
-        $hinweise[] = ew_t('TEXT.SICH_OHNE_TOKEN');
-    }
-    /* k2: eine Wartezeit ueber EW_WARTEZEIT_MAX wird uebernommen, wie sie
-     * ist, und gesagt - nie still gekuerzt. */
-    if (!$mangel && ew_wartezeit_zu_lang($neu)) {
-        $hinweise[] = sprintf(ew_t('TEXT.SICH_WARTEZEIT_ALT'), (int) $neu['timeout'],
+    if (ew_wartezeit_zu_lang($neu)) {
+        $h[] = sprintf(ew_t('TEXT.SICH_WARTEZEIT_ALT'), (int) $neu['timeout'],
             ew_behaelter_timeout_noetig_ms($neu), EW_LOX_TIMEOUT_MAX, EW_WARTEZEIT_MAX);
     }
-    return array($mangel ? null : $neu, $mangel, $anzahl, $hinweise);
+    if (!empty($neu['mqtt_ein'])) {
+        ew_takt_voll_merken();
+        if (!ew_abo_schreiben($neu)) {
+            $h[] = ew_t('MQTT.ABO_NICHT_GESCHRIEBEN');
+        }
+        $h[] = ew_t('TEXT.SICH_DIENST_TAKT');
+    } else {
+        $h[] = ew_t('TEXT.SICH_DIENST_OHNE');
+    }
+    return $h;
+}
+
+/**
+ * Die Sicherungsdatei - lesbarer Kopf (_hinweis, _plugin, _fassung, _stand, bei
+ * Bedarf _warnung) und alle Schluessel der Vorgaben aus $cfg, gebaut vom
+ * gemeinsamen Sicherungsmodul (sicherung_bauen()). Nie ein Sprechtoken, nie die
+ * Vermerke. X-3 (Verbesserungsbau 01.10.2026): wuerde das eigene Zurueckspielen
+ * diese Datei abweisen, sagt es der Kopf _warnung - nur Namen, nie Werte;
+ * geliefert wird sie trotzdem vollstaendig. Rueckgabe: der JSON-Text, '' wenn
+ * er sich nicht bilden laesst.
+ */
+function ew_sicherung_bauen(array $cfg)
+{
+    return sicherung_json(sicherung_bauen(ew_sicherung_beschreibung(), $cfg));
 }
 
 /**
  * X-3: Welche gespeicherten Werte bestuenden das eigene Zurueckspielen
- * nicht? Die Sicherung (dieselbe, die "Einstellungen sichern" ausgibt) wird
- * durch ew_sicherung_lesen() geschickt. Rueckgabe: Liste der NAMEN, nie der
- * Werte; leer = die Sicherung liesse sich zurueckspielen.
+ * nicht? Seit 0.9.34 dieselbe Pruefung wie beim Zurueckspielen ueber das
+ * Sicherungsmodul (sicherung_selbstpruefung()) an genau der Datei, die
+ * "Einstellungen sichern" liefert. Rueckgabe: Liste der NAMEN, nie der Werte;
+ * leer = die Sicherung liesse sich zurueckspielen.
  */
-function ew_rueckspiel_altwerte(array $sich)
+function ew_rueckspiel_altwerte(array $cfg)
 {
-    $sich = ew_ansage_fuer_sicherung($sich);     // wie die Datei selbst: ohne Sprechtoken
-    $js = json_encode($sich, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-    if ($js === false) {
-        /* Nicht kodierbar: das meldet der Knopf selbst (SICH_SCHREIBFEHLER). */
-        return array();
-    }
-    $namen = array();
-    list($neu) = ew_sicherung_lesen($js, $namen);
-    if ($neu !== null) {
-        return array();
-    }
-    return $namen ? array_values(array_unique($namen)) : array('?');
+    $b = ew_sicherung_beschreibung();
+    $d = sicherung_bauen($b, $cfg);
+    unset($d['_warnung']);
+    return sicherung_selbstpruefung($b, $d, $cfg);
 }
 
 function ew_sprachdatei()

@@ -1,6 +1,6 @@
 # LoxBerry-Plugin „Ecowitt-Weiche"
 
-Version 0.9.33
+Version 0.9.34
 
 Holt die Messwerte einer Ecowitt-Wetterstation über **zwei** Netzwerkschnittstellen
 und reicht die Antwort derjenigen durch, die gerade trägt. In der Loxone-Projektdatei
@@ -15,6 +15,19 @@ Werte auf Wunsch auch jede Minute über MQTT in Virtuelle Eingänge – der Weg 
 * Schaltet nichts, misst nichts, speichert keine Messwerte zwischen.
 * Liefert die Vorlagen für Loxone Config (Zustandsbehälter und Beispiel-Stationsbehälter) und drei
   Baustein-Listen aus dem gemeinsamen Musterprojekt, je mit Bild und Schritt-für-Schritt-Anleitung.
+
+## Neu in 0.9.34
+
+- **Verhalten geändert – Einstellungen sichern und zurückspielen nach der gemeinsamen Vorlage:** Die Knöpfe „Einstellungen sichern“ und „Einstellungen zurückspielen“ arbeiten jetzt mit demselben Sicherungsmodul (1.2.2) wie die übrigen Plugins dieser Reihe.
+  - Die Sicherung trägt jetzt einen lesbaren Kopf: Kennzeichen `LoxBerry-Plugin-Ecowitt-Weiche` (`_plugin`), Fassung (`_fassung`), Hinweis und Zeitpunkt. Eine Datei eines anderen Plugins oder ohne Kennzeichen wird als Ganzes abgewiesen – ausgenommen eine ältere Sicherung dieses Plugins (nächster Punkt).
+  - **Sicherungen bis 0.9.33 lassen sich weiter zurückspielen.** Keine frühere Fassung schrieb einen Kopf. Eine solche Datei wird an den sechs Einstellungen erkannt, die jede dieser Fassungen geschrieben hat und die keines der übrigen Plugins dieser Reihe zusammen führt: `primaer`, `ersatz`, `pfad`, `timeout`, `token` und `pruefe_wert`. Die Meldung sagt dann, dass eine ältere Sicherung erkannt wurde. Fehlt einer Datei ohne Kopf eine dieser Einstellungen, wird sie als Ganzes abgewiesen.
+  - Eine Einstellung, die diese Fassung nicht kennt, wird nicht übernommen und mit ihrem Namen gemeldet, nie mit ihrem Wert – oben in der Datei und in den Blöcken der Sprachansagen. Die übrigen Einstellungen werden zurückgespielt. Bisher wies ein unbekannter Name die ganze Datei ab.
+  - Ein leerer Wert in der Sicherung überschreibt keinen bestehenden; der bisherige Wert bleibt, und die Meldung nennt den Namen. Das gilt auch für das Wortzeichen und die beiden Adressen. Bisher wurde ein leerer Wert übernommen, wo er zulässig war; ein leeres Wortzeichen machte den Endpunkt offen, eine leere Adresse schaltete diese Schnittstelle ab.
+  - Fehlen einer Sicherung „MQTT aktivieren“, das Präfix oder die Sprachansagen, behalten sie ihren geltenden Wert, und die Meldung nennt sie. Bisher galten dann MQTT aus und das Präfix ab Werk.
+  - Nach dem Zurückspielen geht wie nach dem Speichern im Reiter MQTT beim nächsten Minutenlauf der volle Satz hinaus, und die Abo-Datei für Gateway V1 folgt dem zurückgespielten Präfix. Die Meldung sagt, wer die Einstellungen liest: der Minutentakt oder, bei MQTT aus, `live.php`; ein Neustart ist nicht nötig.
+- **Verhalten geändert – Zurückspielen nur mit Haken:** Zwischen dem Feld für die Sicherungsdatei und dem Knopf „Einstellungen zurückspielen“ steht ein Haken „Ja, die geltenden Einstellungen durch die Sicherung ersetzen“, ab Werk aus. Ohne ihn wird die Datei nicht gelesen und nichts geändert, und die Meldung sagt es. Haken, Text und die Prüfung der hochgeladenen Datei (über das Formular gekommen, höchstens 256 KB) kommen aus dem gemeinsamen Sicherungsmodul und sind in allen Plugins dieser Reihe gleich.
+- Unverändert: Jeder Wert wird wie im Formular geprüft; eine Datei mit einem unzulässigen Wert ändert gar nichts, alle Beanstandungen werden genannt. Das Wortzeichen gehört in die Datei, die Sprechtoken nicht; eine Datei mit Sprechtoken wird abgewiesen. Die Zweitschrift zieht mit, und die Meldung sagt es, wenn sie nicht mit der Konfiguration übereinstimmt. Eine Wartezeit, für die der Behälter in Loxone mehr Zeit bräuchte, als Loxone annimmt, wird übernommen und gemeldet.
+- Am Gerät nicht gemessen. Gemessen wurde mit einem Prüfstand unter PHP 7.4 und 8.4 auf dem Arbeitsrechner, der über einen Webserver die echten Knöpfe drückt, mit den Sicherungen aller 25 Vorfassungen von 0.9.9 bis 0.9.33.
 
 ## Neu in 0.9.33
 

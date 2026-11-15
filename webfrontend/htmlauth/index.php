@@ -356,17 +356,12 @@ if ($ew_post && isset($_POST['pruefen'])) {
  * traegt sie ein Geheimnis, und der Hinweis am Knopf sagt das.
  * Der Download ist die eine Antwort ohne Umleitung (Regeln/04). */
 if ($ew_post && isset($_POST['ew_sichern'])) {
-    /* X-3 (Verbesserungsbau 01.10.2026): bestuende ein gespeicherter Wert das
-       eigene Zurueckspielen nicht, sagt es der Kopf der Datei - mit den
-       NAMEN, nie den Werten. Geliefert wird trotzdem, vollstaendig. */
-    $ew_sich = ew_ansage_fuer_sicherung(ew_config());     // nie ein Sprechtoken
-    $ew_altw = ew_rueckspiel_altwerte($ew_sich);
-    if ($ew_altw) {
-        $ew_sich = array('_warnung' => sprintf(ew_t('TEXT.SICH_ALTWERT_KOPF'), implode(', ', $ew_altw))) + $ew_sich;
-    }
-    $ew_js = json_encode($ew_sich,
-        JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-    if ($ew_js !== false) {
+    /* 0.9.34: Kopf und Inhalt baut das gemeinsame Sicherungsmodul (ew_sicherung_bauen()): _hinweis,
+       _plugin, _fassung, _stand; nie ein Sprechtoken, nie die Vermerke. X-3 (Verbesserungsbau
+       01.10.2026): bestuende ein gespeicherter Wert das eigene Zurueckspielen nicht, sagt es der Kopf
+       _warnung - mit den NAMEN, nie den Werten. Geliefert wird trotzdem, vollstaendig. */
+    $ew_js = ew_sicherung_bauen(ew_config());
+    if ($ew_js !== '') {
         while (ob_get_level() > 0) { @ob_end_clean(); }
         header('Content-Type: application/json; charset=utf-8');
         header('Content-Disposition: attachment; filename="ecowitt_einstellungen_'
@@ -379,53 +374,46 @@ if ($ew_post && isset($_POST['ew_sichern'])) {
 
 /* ---------------- Einstellungen zurueckspielen (C1) ----------------
  *
- * is_uploaded_file() ZUERST: ohne diese Pruefung liesse sich jede Datei des
- * Servers unterschieben. Dann die Groessengrenze - eine Sicherung dieses
- * Plugins ist wenige Kilobyte gross; alles darueber wird gar nicht gelesen.
+ * 0.9.34: den Eingang prueft das gemeinsame Sicherungsmodul (sicherung_eingang(), Modul 1.1.0,
+ * Entscheidung des Hausherrn 12.11.2026) - in jeder Linie gleich: zuerst der Haken zurueck_ok (ohne
+ * ihn wird nichts gelesen und nichts geaendert), dann is_uploaded_file() (sonst liesse sich jede
+ * Datei des Servers unterschieben) und die Groessengrenze des Moduls; erst danach wird die Datei
+ * gelesen.
  *
  * "Uebernommen" heisst seit 0.9.15: Konfiguration UND Zweitschrift sind
  * geschrieben, und ein erneutes Lesen zeigt den zurueckgespielten Stand.
  * Bis 0.9.14 kam die Meldung, auch wenn ew_config() den Stand im selben
  * Aufruf aus der Zweitschrift zurueckgeheilt hatte (Pruefer code, Befund 2). */
 if ($ew_post && isset($_POST['ew_zurueck'])) {
-    if (!isset($_FILES['ew_sicherung']) || !is_array($_FILES['ew_sicherung'])
-        || !isset($_FILES['ew_sicherung']['tmp_name']) || !is_string($_FILES['ew_sicherung']['tmp_name'])
-        || !@is_uploaded_file($_FILES['ew_sicherung']['tmp_name'])) {
-        $ew_fehler[] = ew_t('TEXT.SICH_KEINE_DATEI');
-    } elseif ((int) $_FILES['ew_sicherung']['size'] > 262144) {
-        $ew_fehler[] = ew_t('TEXT.SICH_ZU_GROSS');
+    list($ew_roh, $ew_ab) = sicherung_eingang(ew_sicherung_klartext(), $_POST, $_FILES, 'ew_sicherung');
+    if ($ew_ab !== null) {
+        $ew_sm = sicherung_meldungen(ew_sicherung_klartext(), $ew_ab);
+        foreach ($ew_sm['fehler'] as $ew_x) { $ew_fehler[] = $ew_x; }
     } else {
-        list($ew_neu, $ew_mangel, $ew_n, $ew_hinw) = ew_sicherung_lesen(
-            (string) @file_get_contents($_FILES['ew_sicherung']['tmp_name']));
-        if ($ew_neu === null) {
-            /* ALLE Beanstandungen, nicht nur die erste - und geaendert wird
-             * nichts. */
-            $ew_fehler[] = array('kopf' => ew_t('TEXT.SICH_ABGELEHNT'), 'punkte' => $ew_mangel);
-        } else {
-            $ew_zweit = false;
-            if (!ew_config_speichern($ew_neu, $ew_zweit)) {
-                $ew_fehler[] = ew_t('TEXT.SICH_SCHREIBFEHLER');
-            } elseif (!$ew_zweit) {
-                $ew_fehler[] = ew_t('TEXT.SICH_ZWEIT_FEHLT');
-            } else {
-                $ew_datei = ew_json_lesen(ew_paths()['cfgdatei']);
-                $ew_cfg = ew_config();
-                $ew_gleich = is_array($ew_datei);
-                foreach (array_keys(ew_vorgaben()) as $ew_k) {
-                    if (!$ew_gleich) {
-                        break;
-                    }
-                    $ew_gleich = array_key_exists($ew_k, $ew_datei)
-                        && $ew_datei[$ew_k] === $ew_neu[$ew_k] && $ew_cfg[$ew_k] === $ew_neu[$ew_k];
-                }
-                if ($ew_gleich) {
-                    $ew_meldung = sprintf(ew_t('TEXT.SICH_UEBERNOMMEN'), $ew_n);
-                    $ew_hinweise = array_merge($ew_hinweise, $ew_hinw);
-                } else {
-                    $ew_fehler[] = ew_t('TEXT.SICH_NICHT_WIRKSAM');
-                }
-            }
+        /* 0.9.34: das gemeinsame Sicherungsmodul (sicherung_zurueckspielen(), Beschreibung
+         * ew_sicherung_beschreibung()) liest, prueft, verwirft Unbekanntes mit Namen, laesst leere Werte
+         * den bisherigen stehen und aendert bei einer Beanstandung GAR NICHTS (alle Beanstandungen, nicht
+         * nur die erste). ew_config_speichern() schreibt Konfiguration und Zweitschrift; das Modul misst
+         * danach, ob beide inhaltsgleich sind, und meldet es sonst (bis 0.9.33 SICH_ZWEIT_FEHLT und
+         * SICH_NICHT_WIRKSAM). Der eigene Ruecklese-Vergleich mit ew_config() entfaellt: ein Stand mit
+         * Wortzeichen-Schluessel heilt ew_config() nicht, und jeder Wert ist schon in der Normalform von
+         * ew_wert_pruefen(). Die Meldungen sind Klartext und werden bei der Ausgabe maskiert (ew_e()). */
+        $ew_b = ew_sicherung_klartext();
+        $ew_b['speichern'] = function ($neu) { return ew_config_speichern($neu); };
+        $ew_b['zweitschrift'] = function () { $p = ew_paths(); return array($p['cfgdatei'], $p['sicherung']); };
+        $ew_b['nachziehen'] = 'ew_sicherung_nachziehen';
+        $ew_b['log'] = 'ew_log';
+        $ew_r = sicherung_zurueckspielen($ew_b, $ew_roh);
+        $ew_sm = sicherung_meldungen($ew_b, $ew_r);
+        foreach ($ew_sm['fehler'] as $ew_x) { $ew_fehler[] = $ew_x; }
+        $ew_sh = $ew_sm['hinweise'];
+        if ($ew_r['ok'] && !empty($ew_r['gespeichert']) && $ew_sh) {
+            /* Der erste Satz des Moduls ist "zurueckgespielt: n Werte" (K_UEBERNOMMEN) - er steht wie
+             * bisher im gruenen Kasten, die uebrigen als Hinweise darunter. */
+            $ew_meldung = (string) array_shift($ew_sh);
         }
+        foreach ($ew_sh as $ew_x) { $ew_hinweise[] = $ew_x; }
+        $ew_cfg = ew_config();
     }
 }
 
@@ -725,6 +713,7 @@ if (ew_wartezeit_zu_lang($ew_cfg)) { ?>
     <?php echo ew_fmt(); ?>
     <input data-role="none" type="hidden" name="activetab" value="tab-settings">
     <input data-role="none" type="file" name="ew_sicherung" accept=".json">
+    <?= sicherung_haken_zeile(ew_sicherung_beschreibung()) ?>
     <button data-role="none" class="sm-btn sm-b-aktion" type="submit" name="ew_zurueck" value="1"><?= ew_t('TEXT.K_ZURUECK') ?></button>
   </form>
 </div>

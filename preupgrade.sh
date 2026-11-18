@@ -38,7 +38,7 @@ if [ -z "$BASE" ] || [ ! -d "$BASE/config/plugins" ] || [ ! -d "$BASE/data/plugi
     exit 2
 fi
 MARKE="$BASE/data/plugins/$PFOLDER.upgrade_laeuft"
-if [ -d "$BASE/data/plugins" ] && date '+%Y-%m-%d %H:%M:%S' > "$MARKE" 2>/dev/null; then
+if [ -d "$BASE/data/plugins" ] && date +%s > "$MARKE" 2>/dev/null; then
     echo "<OK> Upgrade-Marke gesetzt: $MARKE"
 else
     # 05.11.2026: ohne Marke haelt die Installation das Update fuer eine Neuinstallation und legt die Einstellungen beiseite; bis hierher nur eine Warnung.

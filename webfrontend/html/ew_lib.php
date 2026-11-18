@@ -787,8 +787,7 @@ function ew_config_vervollstaendigen()
         return array('stand' => 'ruht', 'schluessel' => array());
     }
     $marke = dirname($p['datadir']) . '/' . $p['plugin'] . '.upgrade_laeuft';
-    clearstatcache(true, $marke);
-    if (is_file($marke) && abs(time() - (int) @filemtime($marke)) < EW_MARKE_FRIST) {
+    if (ew_marke_frisch($marke)) {
         return array('stand' => 'ruht', 'schluessel' => array());
     }
     clearstatcache(true, $p['cfgdatei']);
@@ -2535,6 +2534,22 @@ define('EW_TAKT_SCHRANKE', 30);
 define('EW_VOLLVERSAND', 300);
 /* Eine Upgrade-Marke, die juenger ist, haelt den Takt an (Regeln/06). */
 define('EW_MARKE_FRIST', 3600);
+/* Frage 74 (Entscheidung des Hausherrn 18.11.2026): die Marke gilt nach der Hausregel - Inhalt Unixzeit
+   (preupgrade.sh schreibt sie seither so), nicht aus der Zukunft, juenger als EW_MARKE_FRIST. Bis zur
+   Vorfassung zaehlte die Aenderungszeit mit abs(), eine Marke aus der Zukunft galt also. */
+function ew_marke_frisch($marke)
+{
+    clearstatcache(true, $marke);
+    if (!is_file($marke)) {
+        return false;
+    }
+    $t = trim((string) @file_get_contents($marke));
+    if (!preg_match('/^[0-9]{1,12}$/', $t)) {
+        return false;
+    }
+    $alter = time() - (int) $t;
+    return $alter >= 0 && $alter < EW_MARKE_FRIST;
+}
 /* Ein Lauf, der laenger zurueckliegt, ist im Reiter Test ein Befund. */
 define('EW_TAKT_ALT', 180);
 define('EW_MQTT_PRAEFIX_VORGABE', 'ecowittweiche');
@@ -3055,8 +3070,7 @@ function ew_takt()
         return array('ende' => 'ohne_wurzel');
     }
     $marke = dirname($p['datadir']) . '/' . $p['plugin'] . '.upgrade_laeuft';
-    clearstatcache(true, $marke);
-    if (is_file($marke) && abs(time() - (int) @filemtime($marke)) < EW_MARKE_FRIST) {
+    if (ew_marke_frisch($marke)) {
         return array('ende' => 'upgrade');
     }
     $c = ew_config(false);

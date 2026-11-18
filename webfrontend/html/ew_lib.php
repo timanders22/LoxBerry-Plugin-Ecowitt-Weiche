@@ -1874,7 +1874,14 @@ function ew_sicherung_beschreibung()
             return $ok ? '' : $grund;
         },
         'vorbereiten' => 'ew_sicherung_vorbereiten',
-        'jetzt' => 'ew_ansage_cfg',
+        // 0.9.35 (Modul 1.2.9, Bauform vom 15.11.2026): das Modul sieht die geltende Konfiguration ungefiltert -
+        // ew_config() liefert nur die Vorgabenschluessel; was die Datei sonst traegt, haengt hier an, damit das
+        // Zurueckspielen es beim Namen nennt, statt es still wegfallen zu lassen.
+        'jetzt' => function () {
+            $j = ew_ansage_cfg();
+            $w = ew_json_lesen(ew_paths()['cfgdatei']);
+            return $j + (is_array($w) ? $w : array());
+        },
         't' => 'ew_t',
     );
 }

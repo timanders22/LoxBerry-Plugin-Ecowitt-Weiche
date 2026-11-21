@@ -1,6 +1,6 @@
 # LoxBerry-Plugin „Ecowitt-Weiche"
 
-Version 0.9.37
+Version 0.9.38
 
 Holt die Messwerte einer Ecowitt-Wetterstation über **zwei** Netzwerkschnittstellen
 und reicht die Antwort derjenigen durch, die gerade trägt. In der Loxone-Projektdatei
@@ -15,6 +15,28 @@ Werte auf Wunsch auch jede Minute über MQTT in Virtuelle Eingänge – der Weg 
 * Schaltet nichts, misst nichts, speichert keine Messwerte zwischen.
 * Liefert die Vorlagen für Loxone Config (Zustandsbehälter und Beispiel-Stationsbehälter) und drei
   Baustein-Listen aus dem gemeinsamen Musterprojekt, je mit Bild und Schritt-für-Schritt-Anleitung.
+
+## Neu in 0.9.38
+
+- Die Kopfzeile zeigt jetzt die installierte Fassung, einheitlich in allen Plugins.
+- **Neu – Haus-Themen für andere Plugins (ab Werk aus):** Im Reiter MQTT gibt es zwei Haken: „Außenfühler unter haus/wetter/ melden“ und „Innenfühler unter haus/klima/ melden“. Je Fühler der Station (Außenfühler; Basis innen) wählen Sie den Bereich und den Namen; vorbelegt sind Wetter mit `ecowitt` und Klima mit `ecowitt_basis`. Gesendet wird retained über eine kurze Sitzung direkt am Broker, nicht über das MQTT-Gateway; der Miniserver braucht diese Themen nicht.
+
+  | Thema | Wert |
+  |---|---|
+  | `haus/wetter/<name>/temperatur` | °C, eine Nachkommastelle, ohne Aussage -999 |
+  | `haus/wetter/<name>/feuchte` | %, ganz, ohne Aussage -1 |
+  | `haus/wetter/<name>/druck` | hPa (absolut, Basis), eine Nachkommastelle, -1 |
+  | `haus/wetter/<name>/wind_kmh`, `…/boeen_kmh` | km/h, eine Nachkommastelle, -1 |
+  | `haus/wetter/<name>/windrichtung_grad` | Grad, ganz, -1 |
+  | `haus/wetter/<name>/regen_mm_h`, `…/regen_heute_mm` | mm/h bzw. mm, eine Nachkommastelle, -1 |
+  | `haus/wetter/<name>/uv` | UV-Index, eine Nachkommastelle, -1 |
+  | `haus/wetter/<name>/strahlung_wm2` | W/m², ganz, -1 |
+  | `haus/klima/<name>/temperatur`, `…/feuchte`, `…/druck` | wie oben, aus der Basis (intemp, inhumi, abs) |
+  | `haus/<bereich>/<name>/zeit` | Unix-Zeit der letzten brauchbaren Antwort der Station, -1 unbekannt |
+  | `haus/<bereich>/<name>/anbieter` | `ecowittweiche` |
+  | `haus/<bereich>/zaehler/ecowittweiche` | 0 bis 999 jede Minute, **nie retained** |
+
+  Jedes Feld nur, wenn die Station es liefert; eine Einheit, die nicht passt (etwa °F), ergibt „ohne Aussage“, umgerechnet wird nichts. Liegt die letzte brauchbare Antwort über eine Stunde zurück, gehen alle Felder „ohne Aussage“ hinaus. Ein Wert, den ein anderes Plugin unter demselben Namen hält, wird nicht überschrieben. Haken aus, Bereich oder Name geändert, MQTT aus, Deinstallation: die Weiche räumt ihre Themen am Broker ab und liest nach. Der Reiter Test liest am Broker zurück, ob die Werte dort stehen. Die gemerkten Themen überstehen ein Update. Gemessen auf dem Arbeitsrechner mit nachgebildeten Stationsantworten und einem nachgebildeten Broker (PHP 7.4 und 8.4, Hakenskripte in WSL); am Gerät nicht gemessen. Zusatzfühler (etwa WH31) liest die Weiche bisher nicht; sie kommen deshalb hier noch nicht vor.
 
 ## Neu in 0.9.37
 

@@ -44,9 +44,25 @@ fi
 # Upgrade-Marke und der gesicherte Wechselzaehler. Bis 0.9.14 blieben
 # .alt, .tmp.* und .neu.* mit dem Wortzeichen liegen, und die Meldung sagte
 # "geloescht" (Pruefer installer, Befund 4).
+# 0.9.38: die zurueckbehaltenen Haus-Themen (haus/wetter, haus/klima) mit Ruecklesen am Broker abraeumen - nur die,
+# die diese Installation gemerkt hat (data/plugins/<ordner>/haus.json; ew_takt.php --haus-leeren entscheidet das
+# selbst), nie haus/#. Vor dem Loeschen des Datenordners; als loxberry, stdin geschlossen, Rueckgabe egal
+# (Bauart Spotpreis aWATTar 1.2.39).
+EW_TAKT="$BASE/bin/plugins/$PFOLDER/ew_takt.php"
+if command -v php >/dev/null 2>&1 && [ -f "$EW_TAKT" ]; then
+    if [ "$(id -u)" = "0" ] && id loxberry >/dev/null 2>&1; then
+        su -s /bin/bash loxberry -c "$(printf '%q ' env "LBHOMEDIR=$BASE" "LBPPLUGINDIR=$PFOLDER" \
+            timeout 60 php "$EW_TAKT" --haus-leeren)" < /dev/null 2>&1 || true
+    else
+        env "LBHOMEDIR=$BASE" "LBPPLUGINDIR=$PFOLDER" timeout 60 php "$EW_TAKT" --haus-leeren \
+            < /dev/null 2>&1 || true
+    fi
+else
+    echo "<INFO> PHP oder ew_takt.php fehlt - zurueckbehaltene Haus-Themen wurden nicht geleert."
+fi
 CP="$BASE/config/plugins/$PFOLDER"
 DP="$BASE/data/plugins/$PFOLDER"
-for F in "$CP.backup.json"* "$CP.kaputt.json"* "$DP.upgrade_laeuft" "$DP.stand.json"*; do
+for F in "$CP.backup.json"* "$CP.kaputt.json"* "$DP.upgrade_laeuft" "$DP.stand.json"* "$DP.haus.json"*; do
     if [ -e "$F" ] || [ -L "$F" ]; then
         rm -f "$F" 2>/dev/null
     fi
@@ -55,7 +71,7 @@ rm -rf "${DP:?}" 2>/dev/null
 
 # Nachzaehlen: <OK> erst, wenn nichts mehr daliegt (Regeln/06).
 REST=""
-for F in "$CP.backup.json"* "$CP.kaputt.json"* "$DP.upgrade_laeuft" "$DP.stand.json"* "$DP"; do
+for F in "$CP.backup.json"* "$CP.kaputt.json"* "$DP.upgrade_laeuft" "$DP.stand.json"* "$DP.haus.json"* "$DP"; do
     if [ -e "$F" ] || [ -L "$F" ]; then
         REST="$REST $F"
     fi

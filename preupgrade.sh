@@ -97,6 +97,23 @@ else
     echo "<INFO> Noch kein Wechselzaehler vorhanden - nichts zu sichern."
 fi
 
+# 0.9.38: die gemerkten Haus-Themen (data/plugins/<ordner>/haus.json, haus/wetter und haus/klima) sind der Merker
+# "war Anbieter" und die einzige Liste, nach der die Weiche ihre zurueckbehaltenen Themen abraeumt. Sie ueberleben
+# purge_installation nicht und gehen deshalb wie der Wechselzaehler neben den Ordner; postinstall.sh holt sie nur bei
+# Marke zurueck. Scheitert das Sichern, wird die Aktualisierung abgebrochen wie bei der Konfiguration.
+HT="$BASE/data/plugins/$PFOLDER/haus.json"
+HTB="$BASE/data/plugins/$PFOLDER.haus.json"
+rm -f "$HTB" "$HTB.neu."* 2>/dev/null
+if [ -s "$HT" ]; then
+    if zs_hinlegen "$HT" "$HTB"; then
+        echo "<OK> Gemerkte Haus-Themen gesichert: $HTB"
+    else
+        rm -f "$HTB.neu.$$" 2>/dev/null
+        echo "<WARNING> Die gemerkten Haus-Themen liessen sich nicht sichern."
+        ZS_FEHL="$ZS_FEHL haus.json"
+    fi
+fi
+
 # Gesichert wird nach INHALT, und nie direkt ueber die alte Zweitschrift.
 #
 # Bis 0.9.12 stand hier ein cp -p ueber die Zweitschrift, sobald ecowitt.json

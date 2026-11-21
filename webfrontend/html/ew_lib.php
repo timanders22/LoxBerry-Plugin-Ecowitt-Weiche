@@ -127,6 +127,14 @@ function ew_vorgaben()
            Konfiguration ohne den Schluessel gilt als aus (ew_config(), E3). */
         'mqtt_ein'     => 1,
         'mqtt_praefix' => 'ecowittweiche',
+        /* 0.9.38 (Entscheidung des Hausherrn 21.11.2026): Haus-Themen haus/wetter und haus/klima fuer andere Plugins,
+           ab Werk aus; Bereich und Name je Fuehler der Station (ew_haus_fuehler()). */
+        'haus_wetter_ein'     => 0,
+        'haus_klima_ein'      => 0,
+        'haus_aussen_bereich' => 'wetter',
+        'haus_aussen_name'    => 'ecowitt',
+        'haus_basis_bereich'  => 'klima',
+        'haus_basis_name'     => 'ecowitt_basis',
     );
 }
 
@@ -502,6 +510,21 @@ function ew_wert_pruefen($k, $w)
         $ok = ew_mqtt_praefix_taugt($w);
         $wert = $w;
         break;
+    case 'haus_wetter_ein':
+    case 'haus_klima_ein':
+        $wert = ew_schalter_wert($w);
+        $ok = $wert !== null;
+        break;
+    case 'haus_aussen_bereich':
+    case 'haus_basis_bereich':
+        $ok = is_string($w) && in_array($w, array('aus', 'wetter', 'klima'), true);
+        $wert = $w;
+        break;
+    case 'haus_aussen_name':
+    case 'haus_basis_name':
+        $ok = ew_haus_name_taugt($w);
+        $wert = $w;
+        break;
     }
     if ($ok) {
         return array(true, $wert, '');
@@ -710,6 +733,8 @@ function ew_config($erzeugen = true)
     }
     $c['timeout'] = max(1, min(EW_WARTEZEIT_LESBAR, (int) $c['timeout']));
     $c['mqtt_ein'] = ew_schalter_wert($c['mqtt_ein']) === 1 ? 1 : 0;
+    $c['haus_wetter_ein'] = ew_schalter_wert($c['haus_wetter_ein']) === 1 ? 1 : 0;   // 0.9.38, nur 1 schaltet ein
+    $c['haus_klima_ein'] = ew_schalter_wert($c['haus_klima_ein']) === 1 ? 1 : 0;
     return $c;
 }
 
@@ -1845,7 +1870,7 @@ function ew_sicherung_beschreibung()
         'ansage_haken' => sicherung_block(array('ausfall')),
     );
     /* Normalform wie bisher: Wartezeit und Schalter als Zahl (ew_wert_pruefen() gibt sie zurueck). */
-    foreach (array('timeout', 'pruefe_wert', 'mqtt_ein') as $s) {
+    foreach (array('timeout', 'pruefe_wert', 'mqtt_ein', 'haus_wetter_ein', 'haus_klima_ein') as $s) {
         $schluessel[$s] = array('wandeln' => function ($w) use ($s) {
             list(, $v) = ew_wert_pruefen($s, $w);
             return $v;
@@ -1904,7 +1929,9 @@ function ew_sicherung_klartext()
  */
 function ew_sicherung_spaete_schluessel()
 {
-    return array('mqtt_ein', 'mqtt_praefix', 'tts', 'ansage_regeln', 'ansage_haken');
+    /* 0.9.38: die Haus-Themen kennt eine Sicherung bis 0.9.37 nicht - fehlen sie, bleibt der geltende Wert. */
+    return array('mqtt_ein', 'mqtt_praefix', 'tts', 'ansage_regeln', 'ansage_haken', 'haus_wetter_ein', 'haus_klima_ein',
+                 'haus_aussen_bereich', 'haus_aussen_name', 'haus_basis_bereich', 'haus_basis_name');
 }
 
 /**
@@ -2008,6 +2035,12 @@ function ew_sicherung_nachziehen($neu, $jetzt, $r)
         $h[] = ew_t('TEXT.SICH_DIENST_TAKT');
     } else {
         $h[] = ew_t('TEXT.SICH_DIENST_OHNE');
+    }
+    /* 0.9.38: Haus-Themen - was nach dem Zurueckspielen nicht mehr gesendet wird, sofort mit Ruecklesen abraeumen; der
+       naechste Minutenlauf sendet den vollen Satz. */
+    list($hm) = ew_haus_folgen($neu);
+    if ($hm !== '') {
+        $h[] = $hm;
     }
     return $h;
 }
@@ -3078,6 +3111,8 @@ function ew_takt()
         return array('ende' => 'nicht_eingerichtet');
     }
     if (empty($c['mqtt_ein'])) {
+        /* 0.9.38: ohne MQTT sendet die Weiche keine Haus-Themen - gemerkte raeumt sie trotzdem ab (alle 10 Minuten). */
+        ew_haus_nachraeumen($c, time());
         return array('ende' => 'mqtt_aus');
     }
     if (!is_dir($p['datadir'])) {
@@ -3146,6 +3181,8 @@ function ew_takt()
         $log_ts = $jetzt;
     }
     ew_abo_schreiben($c);
+    /* 0.9.38: Haus-Themen haus/wetter und haus/klima (ab Werk aus) - dieselbe Antwort, derselbe Zaehler. */
+    ew_haus_lauf($c, $ok ? $w['roh'] : null, $alter, $zaehler, $jetzt);
     $takt = array('ts' => $jetzt, 'zaehler' => $zaehler, 'ok' => $ok ? 1 : 0, 'quelle' => $q,
                   'themen' => count($paare), 'gesendet' => $n, 'vollversand' => $voll ? 1 : 0,
                   'voll_ts' => $voll ? $jetzt : $voll_ts, 'praefix' => $praefix, 'udpport' => (int) $gw['udpport'],
@@ -3334,6 +3371,1020 @@ function ew_pruef_mqtt_takt(array $c)
     }
     return array('ok', sprintf(ew_t('TEST.TAKT_OK'), ew_alter_text($a), isset($t['zaehler']) ? (int) $t['zaehler'] : 0,
         isset($t['gesendet']) ? (int) $t['gesendet'] : 0));
+}
+
+/* ==================================================================
+ * HAUS-THEMEN haus/wetter UND haus/klima (0.9.38)
+ * ==================================================================
+ * Entscheidung des Hausherrn 21.11.2026 ("Wir haben doch die Ecowitt Wetterstation mit echten Messwerten"): die
+ * Weiche gibt ihre Messwerte anderen Plugins unter haus/wetter/<name>/... (Aussenfuehler) und haus/klima/<name>/...
+ * (Innenfuehler der Basis), Regeln/07 Nr. 15. Die Form ist die von Zigbee2MqttNG 4.2.5 (bin/zigbee2mqttng_extension.mjs:
+ * Felder mit Rundung und Plausibilitaet, Namensregel, "ohne Aussage" nach einer Stunde, zeit nur zusammen mit einem
+ * Wert, anbieter je Name, Zaehler je Familie, fremde retained Werte werden nie ueberschrieben, Abraeumen mit
+ * Ruecklesen, bin/haus-leeren.php), die Sitzung die von Spotpreis aWATTar 1.2.39 (spot_haus_sitzung(),
+ * spot_haus_leeren(); MQTT 3.1.1 von Hand, kurze Sitzung direkt am Broker).
+ *  - Ab Werk aus: zwei Haken im Reiter MQTT (haus_wetter_ein, haus_klima_ein); wirkt nur mit "MQTT aktivieren".
+ *  - Je Fuehler der Station (aussen, basis) waehlt der Anwender Bereich (wetter, klima, aus) und Namen.
+ *  - Werte, zeit und anbieter retained; haus/<familie>/zaehler/ecowittweiche nie retained (Lebenszeichen, derselbe
+ *    Zaehler wie status/zaehler).
+ *  - Die Haus-Themen sind fuer Plugins, nicht fuer den Miniserver: keine Hakenliste, keine Namenstabelle, nicht in
+ *    der Abo-Datei des Gateways.
+ *  - Gemerkt wird jedes je gesendete retained Thema (haus.json im Datenordner, uebersteht ein Update ueber
+ *    preupgrade.sh/postinstall.sh); die Liste ist der Merker "war Anbieter" und die einzige Quelle beim Abraeumen.
+ *    Nie haus/#, nie ein Thema, das diese Installation nicht selbst gesendet hat.
+ * ================================================================== */
+
+/** Der eigene Name in haus/<familie>/<name>/anbieter und haus/<familie>/zaehler/<anbieter> (Ordnername). */
+define('EW_HAUS_ANBIETER', 'ecowittweiche');
+/** Liegt die letzte brauchbare Antwort laenger zurueck (oder ist sie unbekannt), geht "ohne Aussage" hinaus. */
+define('EW_HAUS_STUMM', 3600);
+/** Alle so viele Sekunden geht der volle Satz hinaus (zeit bleibt damit hoechstens so alt wie dieser Abstand). */
+define('EW_HAUS_VOLL', 1800);
+/** Ein gescheitertes Abraeumen versucht der Minutentakt hoechstens in diesem Abstand erneut. */
+define('EW_HAUS_LEEREN_ABSTAND', 600);
+/** So lange wartet eine Sitzung nach dem SUBACK auf zurueckbehaltene Werte. */
+define('EW_HAUS_LESEFENSTER', 1.0);
+
+/** Die beiden Familien, die diese Linie liefern kann. */
+function ew_haus_familien()
+{
+    return array('wetter', 'klima');
+}
+
+/** Namen, die nie ein <name> sind (Regeln/07 Nr. 15). Fuer die Pruefung einer Eingabe gilt die Vereinigung beider
+ *  Familien (ew_haus_name_taugt()), damit ein Name nicht beim Wechsel des Bereichs ungueltig wird. */
+function ew_haus_reserviert()
+{
+    return array('zaehler', 'anbieter', 'jetzt', 'heute', 'morgen', 'warnung', 'pollen', 'ok', 'datum', 'zeit', 'sprache');
+}
+
+/**
+ * Die Fuehler der Station, wie die Linie sie liest (dieselben Fundstellen wie ew_mqtt_namen()):
+ *   schluessel => array(Vorgabe Bereich, Vorgabe Name, Felder)
+ * Feld: array(Haus-Feld, Suche (id | feld), Fundstelle, Art (z1 eine Nachkommastelle | z0 ganz), ohne Aussage,
+ *             kleinster, groesster plausibler Wert, zulaessige Einheiten ('' = ohne Einheit))
+ * Eine andere Einheit (Station auf Fahrenheit, m/s, inHg ...) ergibt "ohne Aussage" - umgerechnet wird nichts.
+ * temperatur, feuchte, druck nach Regeln/07; die uebrigen Felder des Aussenfuehlers sind ein Vorschlag fuer Regeln/07
+ * nach dem Muster dort (Einheit im Namen wie voc_ugm3; wind_kmh, boeen_kmh, regen_mm_h wie der feste Satz von
+ * Weatherdata). helligkeit (lx) liefert die Station nicht - sie misst die Strahlung in W/m2 (strahlung_wm2).
+ */
+function ew_haus_fuehler()
+{
+    $grad = array('', 'C', "\u{00B0}C", "\u{2103}");
+    return array(
+        'aussen' => array('wetter', 'ecowitt', array(
+            array('temperatur', 'id', '0x02', 'z1', -999, -60, 100, $grad),
+            array('feuchte', 'id', '0x07', 'z0', -1, 0, 100, array('', '%')),
+            array('druck', 'feld', 'abs', 'z1', -1, 300, 1200, array('', 'hPa')),
+            array('wind_kmh', 'id', '0x0B', 'z1', -1, 0, 300, array('', 'km/h')),
+            array('boeen_kmh', 'id', '0x0C', 'z1', -1, 0, 300, array('', 'km/h')),
+            array('windrichtung_grad', 'id', '0x0A', 'z0', -1, 0, 360, array('', "\u{00B0}")),
+            array('regen_mm_h', 'feld', '0x0E', 'z1', -1, 0, 500, array('', 'mm/Hr', 'mm/h')),
+            array('regen_heute_mm', 'feld', '0x10', 'z1', -1, 0, 1000, array('', 'mm')),
+            array('uv', 'id', '0x17', 'z1', -1, 0, 20, array('')),
+            array('strahlung_wm2', 'id', '0x15', 'z0', -1, 0, 2000, array('', 'W/m2', "W/m\u{00B2}")),
+        )),
+        'basis' => array('klima', 'ecowitt_basis', array(
+            array('temperatur', 'feld', 'intemp', 'z1', -999, -60, 100, $grad),
+            array('feuchte', 'feld', 'inhumi', 'z0', -1, 0, 100, array('', '%')),
+            array('druck', 'feld', 'abs', 'z1', -1, 300, 1200, array('', 'hPa')),
+        )),
+    );
+}
+
+/** Namensregel (Regeln/07 Nr. 15, wie haus_name() in Matter2Lox und hausName() in Zigbee2MqttNG): klein, Umlaute
+ *  ausgeschrieben, jedes andere Zeichen ausser a-z, 0-9, _ und - wird _, hoechstens 40 Zeichen. */
+function ew_haus_name($t)
+{
+    $t = str_replace(array("\u{00E4}", "\u{00F6}", "\u{00FC}", "\u{00DF}", "\u{00C4}", "\u{00D6}", "\u{00DC}"),
+                     array('ae', 'oe', 'ue', 'ss', 'ae', 'oe', 'ue'), (string) $t);
+    $t = preg_replace('/[^a-z0-9_-]+/', '_', strtolower($t));
+    $t = trim((string) $t, '_');
+    return rtrim(substr($t, 0, 40), '_');
+}
+
+/** Taugt eine Eingabe als <name>? Nur, wenn die Namensregel sie unveraendert laesst und sie nicht reserviert ist -
+ *  abgewiesen wird, nicht zurechtgebogen (Regeln/05). */
+function ew_haus_name_taugt($n)
+{
+    return is_string($n) && $n !== '' && ew_haus_name($n) === $n && !in_array($n, ew_haus_reserviert(), true);
+}
+
+/**
+ * Welche Fuehler gehen unter welchem Namen hinaus? Rueckgabe array(liste, beanstandet): liste = array von
+ * array(fuehler, familie, name) - nur mit MQTT, eingeschaltetem Haken der Familie und gueltigem Namen; beanstandet =
+ * Fuehler, deren Bereich an ist, deren Name aber nicht taugt oder schon von einem anderen Fuehler derselben Familie
+ * belegt ist (geschlossen ausfallen: dieser Fuehler sendet nicht).
+ */
+function ew_haus_zuordnung(array $c)
+{
+    $liste = array();
+    $schlecht = array();
+    $belegt = array();
+    foreach (array_keys(ew_haus_fuehler()) as $k) {
+        $b = isset($c['haus_' . $k . '_bereich']) ? (string) $c['haus_' . $k . '_bereich'] : '';
+        $n = isset($c['haus_' . $k . '_name']) ? (string) $c['haus_' . $k . '_name'] : '';
+        if (!in_array($b, ew_haus_familien(), true) || empty($c['haus_' . $b . '_ein']) || empty($c['mqtt_ein'])) {
+            continue;
+        }
+        if (!ew_haus_name_taugt($n) || isset($belegt[$b . '/' . $n])) {
+            $schlecht[] = $k;
+            continue;
+        }
+        $belegt[$b . '/' . $n] = true;
+        $liste[] = array('fuehler' => $k, 'familie' => $b, 'name' => $n);
+    }
+    return array($liste, $schlecht);
+}
+
+/** Ein Feld in der Stationsantwort, in derselben Reihenfolge wie ew_mqtt_suchen() (erste Fundstelle). Rueckgabe
+ *  array(Wert als Zeichenkette, Einheit des Knotens) oder null = die Station liefert das Feld nicht. */
+function ew_haus_suchen($knoten, $name, $nur_id)
+{
+    if (!is_array($knoten)) {
+        return null;
+    }
+    $einheit = (isset($knoten['unit']) && is_string($knoten['unit'])) ? trim($knoten['unit']) : '';
+    foreach ($knoten as $k => $v) {
+        if (!$nur_id && (string) $k === $name && !is_array($v)) {
+            return array($v === null ? '' : (is_bool($v) ? ($v ? '1' : '0') : (string) $v), $einheit);
+        }
+        if ((string) $k === 'id' && !is_array($v) && (string) $v === $name) {
+            $val = isset($knoten['val']) ? $knoten['val'] : null;
+            return array((is_array($val) || $val === null) ? '' : (string) $val, $einheit);
+        }
+        if (is_array($v)) {
+            $r = ew_haus_suchen($v, $name, $nur_id);
+            if ($r !== null) {
+                return $r;
+            }
+        }
+    }
+    return null;
+}
+
+/** Eine Zahl fuer ein Haus-Thema: Punkt, z1 eine Nachkommastelle (eine 0 dahinter faellt weg wie in Zigbee2MqttNG),
+ *  z0 ganz, nie Exponent, "-0" -> "0". */
+function ew_haus_zahl($x, $art)
+{
+    if ($art === 'z1') {
+        $s = sprintf('%.1F', round((float) $x, 1));
+        if (substr($s, -2) === '.0') {
+            $s = substr($s, 0, -2);
+        }
+    } else {
+        $s = sprintf('%.0F', round((float) $x));
+    }
+    return ($s === '-0') ? '0' : $s;
+}
+
+/** Der Wert eines Felds aus seiner Fundstelle: null = nicht geliefert; ohne Zahl, mit fremder Einheit oder ausserhalb
+ *  der Grenzen der Wert "ohne Aussage" (Regeln/07: -999 bei temperatur, sonst -1). */
+function ew_haus_wert(array $f, $fund)
+{
+    if (!is_array($fund)) {
+        return null;
+    }
+    $roh = (string) $fund[0];
+    $z = ew_mqtt_zahl($roh);
+    if ($z === null) {
+        return (string) $f[4];
+    }
+    $e = '';
+    if (preg_match('/^\s*+-?[0-9]++(?:\.[0-9]++)?+\s*+(\S.*)$/', $roh, $m)) {   // besitzergreifend: '215' ergibt keine Einheit '5'
+        $e = trim($m[1]);
+    } elseif ($f[0] === 'temperatur') {
+        $e = (string) $fund[1];
+    }
+    if (!in_array($e, $f[7], true)) {
+        return (string) $f[4];
+    }
+    $x = (float) $z;
+    if ($x < $f[5] || $x > $f[6]) {
+        return (string) $f[4];
+    }
+    return ew_haus_zahl($x, $f[3]);
+}
+
+/** Ablage im Datenordner: haus.json (die gemerkten Themen, reist beim Update mit), haus_lauf.json (letzte Sitzung,
+ *  zuletzt gesendete Werte; ein Update loescht sie, dann geht der volle Satz hinaus). */
+function ew_haus_datei()
+{
+    $p = ew_paths();
+    return $p['datadir'] !== '' ? $p['datadir'] . '/haus.json' : '';
+}
+
+function ew_haus_lauf_datei()
+{
+    $p = ew_paths();
+    return $p['datadir'] !== '' ? $p['datadir'] . '/haus_lauf.json' : '';
+}
+
+/** Die gemerkten Themen: Thema => Fuehler. Nur Themen unter haus/wetter/ und haus/klima/ ohne # und +. */
+function ew_haus_themen_lesen()
+{
+    $d = ew_json_lesen(ew_haus_datei());
+    $aus = array();
+    if (is_array($d) && isset($d['themen']) && is_array($d['themen'])) {
+        foreach ($d['themen'] as $t => $f) {
+            if (is_string($t) && preg_match('#^haus/(wetter|klima)/[a-z0-9_-]{1,40}/[a-z0-9_]{1,40}\z#', $t) === 1
+                && is_string($f)) {
+                $aus[$t] = $f;
+            }
+        }
+    }
+    return $aus;
+}
+
+function ew_haus_themen_schreiben(array $t)
+{
+    ksort($t);
+    return ew_json_schreiben(ew_haus_datei(), array('themen' => $t ? $t : new stdClass()));
+}
+
+function ew_haus_lauf_lesen()
+{
+    $d = ew_json_lesen(ew_haus_lauf_datei());
+    return is_array($d) ? $d : array();
+}
+
+/** Sperre fuer haus.json/haus_lauf.json (Minutentakt, Speichern im Reiter MQTT, Zurueckspielen, Deinstallation).
+ *  Rueckgabe der Griff oder null (ohne Datenordner). */
+function ew_haus_sperre()
+{
+    $p = ew_paths();
+    if ($p['datadir'] === '') {
+        return null;
+    }
+    if (!is_dir($p['datadir'])) {
+        @mkdir($p['datadir'], 0775, true);
+    }
+    $s = @fopen($p['datadir'] . '/haus.lock', 'c');
+    if ($s === false) {
+        return null;
+    }
+    if (!flock($s, LOCK_EX)) {
+        fclose($s);
+        return null;
+    }
+    return $s;
+}
+
+function ew_haus_freigeben($s)
+{
+    if (is_resource($s)) {
+        flock($s, LOCK_UN);
+        fclose($s);
+    }
+}
+
+/**
+ * Eine kurze Sitzung am Broker (Abschrift von spot_haus_sitzung(), Spotpreis aWATTar 1.2.39): CONNECT, SUBSCRIBE der
+ * genauen Themen in $lesen (QoS 0, SUBACK geprueft), EW_HAUS_LESEFENSTER s zurueckbehaltene Werte sammeln, dann
+ * PUBLISH QoS 0 - $senden ist Thema => array(Wert, retain); eine leere Nutzlast nur mit retain (Abraeumen). Ist
+ * $entscheiden ein Aufruf, bekommt er die gelesenen Werte (Thema => Wert) und gibt die Liste zurueck, die tatsaechlich
+ * gesendet wird (Pruefung auf fremde Werte VOR dem Senden).
+ * Rueckgabe array('lage' => ok|kein_broker|abgelehnt|zeit, 'werte' => Thema => Wert (nur Retain-Bit), 'gesendet' => n,
+ * 'themen' => gesendete Themen). Zugang aus general.json (Mqtt.Brokerhost/-port/-user/-pass); das Kennwort steht nur
+ * im CONNECT-Paket, nie in einem Protokoll und nie auf einer Befehlszeile (Regeln/05).
+ */
+function ew_haus_sitzung(array $senden, array $lesen, $entscheiden = null)
+{
+    $aus = array('lage' => 'kein_broker', 'werte' => array(), 'gesendet' => 0, 'themen' => array());
+    $p = ew_paths();
+    $gen = $p['lbhome'] !== '' ? ew_json_lesen($p['lbhome'] . '/config/system/general.json') : null;
+    $m = array();
+    if (is_array($gen) && isset($gen['Mqtt']) && is_array($gen['Mqtt'])) {
+        $m = $gen['Mqtt'];
+    }
+    if (!$m) {
+        return $aus;
+    }
+    $hol = function ($k) use ($m) {
+        return (isset($m[$k]) && is_scalar($m[$k])) ? (string) $m[$k] : '';
+    };
+    $host = trim($hol('Brokerhost'));
+    if ($host === '' || $host === 'localhost') {
+        $host = '127.0.0.1';
+    }
+    $port = (int) $hol('Brokerport');
+    if ($port <= 0 || $port > 65535) {
+        $port = 1883;
+    }
+    $benutzer = $hol('Brokeruser');
+    $kennwort = $hol('Brokerpass');
+    $soll = array();
+    foreach ($lesen as $t) {
+        $t = (string) $t;
+        if ($t !== '' && strpbrk($t, "#+\0") === false) {
+            $soll[$t] = true;
+        }
+    }
+    $soll = array_slice(array_keys($soll), 0, 50);
+
+    $errno = 0;
+    $errstr = '';
+    $s = @stream_socket_client('tcp://' . $host . ':' . $port, $errno, $errstr, 2);
+    if (!$s) {
+        return $aus;
+    }
+    stream_set_timeout($s, 1);
+    $schreib = function ($daten) use ($s) {
+        $daten = (string) $daten;
+        return @fwrite($s, $daten) === strlen($daten);
+    };
+    $zk = function ($t) {
+        return pack('n', strlen($t)) . $t;
+    };
+    $laenge = function ($n) {
+        $o = '';
+        do {
+            $b = $n % 128;
+            $n = intdiv($n, 128);
+            if ($n > 0) {
+                $b |= 128;
+            }
+            $o .= chr($b);
+        } while ($n > 0);
+        return $o;
+    };
+    $lies_bis = microtime(true) + 10.0;
+    $lies = function ($n) use ($s, $lies_bis) {
+        $d = '';
+        while (strlen($d) < $n) {
+            if (microtime(true) >= $lies_bis) {
+                return null;
+            }
+            $t = @fread($s, $n - strlen($d));
+            if ($t === false || $t === '') {
+                $meta = stream_get_meta_data($s);
+                if (!empty($meta['timed_out']) || !empty($meta['eof']) || feof($s)) {
+                    return null;
+                }
+                continue;
+            }
+            $d .= $t;
+        }
+        return $d;
+    };
+    $paket = function () use ($lies) {
+        $k = $lies(1);
+        if ($k === null) {
+            return null;
+        }
+        $n = 0;
+        $mult = 1;
+        for ($i = 0; $i < 4; $i++) {
+            $b = $lies(1);
+            if ($b === null) {
+                return null;
+            }
+            $n += (ord($b) & 127) * $mult;
+            $mult *= 128;
+            if (!(ord($b) & 128)) {
+                break;
+            }
+        }
+        $r = ($n > 0) ? $lies($n) : '';
+        return ($r === null) ? null : array(ord($k), $r);
+    };
+    /* Nur ein zurueckbehaltener Wert (Retain-Bit) zaehlt: er ist das, was ein Abnehmer beim Anmelden bekommt. */
+    $merke = function ($pk) use (&$aus, $soll) {
+        if (strlen($pk[1]) < 2 || !($pk[0] & 1)) {
+            return;
+        }
+        $tl = unpack('n', substr($pk[1], 0, 2));
+        $t = substr($pk[1], 2, $tl[1]);
+        $versatz = 2 + $tl[1] + ((($pk[0] >> 1) & 3) > 0 ? 2 : 0);
+        if (in_array($t, $soll, true)) {
+            $aus['werte'][$t] = (string) substr($pk[1], $versatz);
+        }
+    };
+
+    $flags = 0x02;
+    $nutz = $zk('ewhaus' . getmypid());
+    if ($benutzer !== '') {
+        $flags |= 0x80;
+        if ($kennwort !== '') {
+            $flags |= 0x40;
+        }
+    }
+    $kopf = $zk('MQTT') . chr(4) . chr($flags) . pack('n', 60);
+    if ($benutzer !== '') {
+        $nutz .= $zk($benutzer);
+        if ($kennwort !== '') {
+            $nutz .= $zk($kennwort);
+        }
+    }
+    if (!$schreib(chr(0x10) . $laenge(strlen($kopf . $nutz)) . $kopf . $nutz)) {
+        fclose($s);
+        return $aus;
+    }
+    $ack = $paket();
+    if ($ack === null || ($ack[0] >> 4) !== 2 || strlen($ack[1]) < 2) {
+        fclose($s);
+        $aus['lage'] = 'zeit';
+        return $aus;
+    }
+    if (ord($ack[1][1]) !== 0) {
+        fclose($s);
+        $aus['lage'] = 'abgelehnt';
+        return $aus;
+    }
+    $lage = 'ok';
+    if ($soll) {
+        $sub = pack('n', 1);
+        foreach ($soll as $t) {
+            $sub .= $zk($t) . chr(0);
+        }
+        $schreib(chr(0x82) . $laenge(strlen($sub)) . $sub);
+        $lage = 'zeit';
+        $ende = microtime(true) + 3.0;
+        while (microtime(true) < $ende) {
+            $pk = $paket();
+            if ($pk === null) {
+                if (feof($s)) {
+                    break;
+                }
+                continue;
+            }
+            $art = $pk[0] >> 4;
+            if ($art === 9) {
+                $rc = (string) substr($pk[1], 2);
+                if (strlen($rc) !== count($soll)) {
+                    break;
+                }
+                $lage = 'ok';
+                for ($i = 0; $i < strlen($rc); $i++) {
+                    if (ord($rc[$i]) >= 0x80) {
+                        $lage = 'abgelehnt';
+                    }
+                }
+                break;
+            } elseif ($art === 3) {
+                $merke($pk);
+            }
+        }
+        if ($lage === 'ok') {
+            $ende = microtime(true) + EW_HAUS_LESEFENSTER;
+            while (microtime(true) < $ende) {
+                $pk = $paket();
+                if ($pk === null) {
+                    if (feof($s)) {
+                        break;
+                    }
+                    continue;
+                }
+                if (($pk[0] >> 4) === 3) {
+                    $merke($pk);
+                }
+            }
+        }
+    }
+    if ($lage === 'ok') {
+        if (is_callable($entscheiden)) {
+            $senden = call_user_func($entscheiden, $aus['werte']);
+            if (!is_array($senden)) {
+                $senden = array();
+            }
+        }
+        foreach ($senden as $t => $wr) {
+            $t = (string) $t;
+            $w = (string) (is_array($wr) ? $wr[0] : $wr);
+            $ret = is_array($wr) && !empty($wr[1]);
+            if ($t === '' || strpbrk($t, "#+\0") !== false || ($w === '' && !$ret)) {
+                continue;
+            }
+            $rumpf = $zk($t) . $w;
+            if ($schreib(chr(0x30 | ($ret ? 1 : 0)) . $laenge(strlen($rumpf)) . $rumpf)) {
+                $aus['gesendet']++;
+                $aus['themen'][] = $t;
+            }
+        }
+    }
+    $schreib(chr(0xE0) . chr(0));
+    fclose($s);
+    $aus['lage'] = $lage;
+    return $aus;
+}
+
+/**
+ * Themen abraeumen (Abschrift von spot_haus_leeren(), Form von zng_haus_leeren()): erst zuruecklesen; ist nichts
+ * belegt -> 'nichts'. Sonst leere Nutzlast mit Retain-Bit fuer die belegten Themen und danach in einer EIGENEN Sitzung
+ * zuruecklesen, bis zu drei Runden. Nur die uebergebenen (gemerkten) Themen, nie haus/#. Rueckgabe array('lage' =>
+ * geleert | nichts | rest | kein_broker, 'offen' => noch belegte Themen, 'grund' => Lage der gescheiterten Sitzung).
+ */
+function ew_haus_leeren(array $th, $runden = 3)
+{
+    $th = array_values(array_unique(array_map('strval', $th)));
+    if (!$th) {
+        return array('lage' => 'nichts', 'offen' => array(), 'grund' => '');
+    }
+    $belegt = function ($w) {
+        $o = array();
+        foreach ($w as $t => $v) {
+            if ((string) $v !== '') {
+                $o[] = $t;
+            }
+        }
+        return $o;
+    };
+    $lesen = function ($liste) {
+        $alle = array('lage' => 'ok', 'werte' => array());
+        foreach (array_chunk($liste, 40) as $teil) {
+            $r = ew_haus_sitzung(array(), $teil);
+            if ($r['lage'] !== 'ok') {
+                return $r;
+            }
+            $alle['werte'] += $r['werte'];
+        }
+        return $alle;
+    };
+    $r = $lesen($th);
+    if ($r['lage'] !== 'ok') {
+        return array('lage' => 'kein_broker', 'offen' => array(), 'grund' => $r['lage']);
+    }
+    $offen = $belegt($r['werte']);
+    if (!$offen) {
+        return array('lage' => 'nichts', 'offen' => array(), 'grund' => '');
+    }
+    $lage = 'rest';
+    $grund = '';
+    for ($i = 1; $i <= max(1, (int) $runden); $i++) {
+        $senden = array();
+        foreach ($offen as $t) {
+            $senden[$t] = array('', true);
+        }
+        $r = ew_haus_sitzung($senden, array());
+        if ($r['lage'] !== 'ok') {
+            $lage = 'kein_broker';
+            $grund = $r['lage'];
+            continue;
+        }
+        usleep(300000);
+        $r = $lesen($th);
+        if ($r['lage'] !== 'ok') {
+            $lage = 'kein_broker';
+            $grund = $r['lage'];
+            continue;
+        }
+        $offen = $belegt($r['werte']);
+        if (!$offen) {
+            return array('lage' => 'geleert', 'offen' => array(), 'grund' => '');
+        }
+        $lage = 'rest';
+    }
+    return array('lage' => $lage, 'offen' => $offen, 'grund' => $grund);
+}
+
+/** Gemerkte Themen, deren Familie und Name nicht mehr gesendet werden (Haken aus, Bereich gewechselt, Name
+ *  geaendert, MQTT aus) - sie werden abgeraeumt. */
+function ew_haus_verwaist(array $themen, array $liste)
+{
+    $an = array();
+    foreach ($liste as $z) {
+        $an['haus/' . $z['familie'] . '/' . $z['name'] . '/'] = true;
+    }
+    $weg = array();
+    foreach (array_keys($themen) as $t) {
+        $teile = explode('/', $t);
+        if (count($teile) !== 4 || !isset($an[$teile[0] . '/' . $teile[1] . '/' . $teile[2] . '/'])) {
+            $weg[] = $t;
+        }
+    }
+    return $weg;
+}
+
+/** Verwaiste Themen abraeumen, wenn $erzwingen oder der letzte Versuch EW_HAUS_LEEREN_ABSTAND s zurueckliegt.
+ *  Aendert $themen und $lauf; schreibt haus.json nur bei Erfolg. Rueckgabe das Ergebnis oder null (nichts zu tun). */
+function ew_haus_abraeumen(array &$themen, array $liste, array &$lauf, $jetzt, $erzwingen)
+{
+    $weg = ew_haus_verwaist($themen, $liste);
+    if (!$weg) {
+        unset($lauf['leeren']);
+        return null;
+    }
+    $vt = isset($lauf['leeren_ts']) ? (int) $lauf['leeren_ts'] : 0;
+    if (!$erzwingen && $vt > 0 && $vt <= $jetzt && $jetzt - $vt < EW_HAUS_LEEREN_ABSTAND) {
+        return null;
+    }
+    $e = ew_haus_leeren($weg);
+    $lauf['leeren_ts'] = $jetzt;
+    $lauf['leeren'] = array('zeit' => $jetzt, 'lage' => $e['lage'], 'offen' => $e['offen'], 'grund' => $e['grund'],
+                            'themen' => count($weg));
+    if ($e['lage'] === 'geleert' || $e['lage'] === 'nichts') {
+        foreach ($weg as $t) {
+            unset($themen[$t]);
+            unset($lauf['werte'][$t]);
+        }
+        ew_haus_themen_schreiben($themen);
+        unset($lauf['leeren']);
+    }
+    ew_log('Haus-Themen: Abraeumen von ' . count($weg) . ' Thema/Themen - ' . $e['lage']
+        . ($e['offen'] ? ' (noch belegt: ' . implode(', ', $e['offen']) . ')' : '') . '.');
+    return $e;
+}
+
+/**
+ * Die Werte eines Laufs. $d = die dekodierte Stationsantwort (nur bei frischen Daten, sonst null), $alter =
+ * ew_alter(). Rueckgabe array(werte: Thema => Wert (retained), felder: Fuehler => gelieferte Felder, namen: Basis =>
+ * Fuehler). Regeln: ein Feld, das die Station liefert, geht mit Wert oder "ohne Aussage"; ein gemerktes Feld, das sie
+ * nicht mehr liefert, geht "ohne Aussage"; liegt die letzte brauchbare Antwort ueber EW_HAUS_STUMM s zurueck oder ist
+ * sie unbekannt, gehen alle gemerkten Felder "ohne Aussage" hinaus, zeit bleibt der echte Zeitpunkt (-1 unbekannt).
+ * Ohne frische Daten und nicht stumm: keine Werte, nur der Zaehler.
+ */
+function ew_haus_werte(array $liste, $d, $alter, $jetzt, array $themen)
+{
+    $fu = ew_haus_fuehler();
+    $stumm = ((int) $alter < 0 || (int) $alter > EW_HAUS_STUMM);
+    $zeit = ((int) $alter >= 0) ? (string) ((int) $jetzt - (int) $alter) : '-1';
+    $werte = array();
+    $felder = array();
+    $namen = array();
+    foreach ($liste as $z) {
+        $basis = 'haus/' . $z['familie'] . '/' . $z['name'] . '/';
+        $namen[$basis] = $z['fuehler'];
+        $w = array();
+        if (is_array($d) && !$stumm) {
+            $felder[$z['fuehler']] = array();
+            foreach ($fu[$z['fuehler']][2] as $f) {
+                $v = ew_haus_wert($f, ew_haus_suchen($d, $f[2], $f[1] === 'id'));
+                if ($v !== null) {
+                    $w[$basis . $f[0]] = $v;
+                    $felder[$z['fuehler']][] = $f[0];
+                }
+            }
+        }
+        if (is_array($d) || $stumm) {
+            foreach ($fu[$z['fuehler']][2] as $f) {
+                if (!isset($w[$basis . $f[0]]) && isset($themen[$basis . $f[0]])) {
+                    $w[$basis . $f[0]] = (string) $f[4];
+                }
+            }
+        }
+        if ($w) {
+            $w[$basis . 'zeit'] = $zeit;
+            $w[$basis . 'anbieter'] = EW_HAUS_ANBIETER;
+        }
+        $werte += $w;
+    }
+    return array($werte, $felder, $namen);
+}
+
+/** Was geht hinaus? Felder bei Aenderung (oder alle bei $voll), zeit nur zusammen mit einem Feld desselben Namens,
+ *  anbieter bei Aenderung (also mit dem vollen Satz und beim ersten Mal). Rueckgabe Thema => array(Wert, true). */
+function ew_haus_auswahl(array $werte, array $merk, $voll)
+{
+    $sel = array();
+    $mit = array();
+    foreach ($werte as $t => $v) {
+        $feld = substr($t, strrpos($t, '/') + 1);
+        if ($feld === 'zeit' || $feld === 'anbieter') {
+            continue;
+        }
+        if ($voll || !array_key_exists($t, $merk) || (string) $merk[$t] !== (string) $v) {
+            $sel[$t] = array((string) $v, true);
+            $mit[substr($t, 0, strrpos($t, '/') + 1)] = true;
+        }
+    }
+    foreach ($werte as $t => $v) {
+        $basis = substr($t, 0, strrpos($t, '/') + 1);
+        $feld = substr($t, strlen($basis));
+        if ($feld === 'zeit' && isset($mit[$basis])) {
+            $sel[$t] = array((string) $v, true);
+        } elseif ($feld === 'anbieter' && ($voll || !array_key_exists($t, $merk) || (string) $merk[$t] !== (string) $v)) {
+            $sel[$t] = array((string) $v, true);
+        }
+    }
+    return $sel;
+}
+
+/**
+ * Pruefung auf fremde Werte (Regeln/07 Nr. 15: ein Anbieter ueberschreibt nie einen retained Wert, den er nicht
+ * selbst gesendet hat). $sel = Auswahl, $themen = gemerkte Themen, $gelesen = zurueckbehaltene Werte am Broker.
+ * Traegt <name>/anbieter einen fremden Namen und ist das Thema nicht gemerkt, geht von diesem Namen nichts hinaus;
+ * traegt es den eigenen Namen, gelten seine Themen als eigene (etwa nach einer Neuinstallation ohne Abraeumen); sonst
+ * bleibt jedes nicht gemerkte Thema mit einem zurueckbehaltenen Wert stehen. Rueckgabe array(sel, konflikte).
+ */
+function ew_haus_fremd(array $sel, array $themen, array $gelesen)
+{
+    $konflikte = array();
+    $basen = array();
+    foreach (array_keys($sel) as $t) {
+        if (strpos($t, 'haus/') === 0 && strpos($t, '/zaehler/') === false && !isset($themen[$t])) {
+            $basen[substr($t, 0, strrpos($t, '/') + 1)] = true;
+        }
+    }
+    foreach (array_keys($basen) as $b) {
+        $anb = $b . 'anbieter';
+        $fremd = (!isset($themen[$anb]) && isset($gelesen[$anb]) && $gelesen[$anb] !== '') ? $gelesen[$anb] : '';
+        if ($fremd !== '' && $fremd !== EW_HAUS_ANBIETER) {
+            foreach (array_keys($sel) as $t) {
+                if (strpos($t, $b) === 0) {
+                    unset($sel[$t]);
+                }
+            }
+            $konflikte[] = $anb . ' = ' . ew_kurz($fremd, 40);
+            continue;
+        }
+        if ($fremd === EW_HAUS_ANBIETER) {
+            continue;
+        }
+        foreach (array_keys($sel) as $t) {
+            if (strpos($t, $b) === 0 && !isset($themen[$t]) && isset($gelesen[$t]) && $gelesen[$t] !== '') {
+                unset($sel[$t]);
+                $konflikte[] = $t;
+            }
+        }
+    }
+    return array($sel, $konflikte);
+}
+
+/**
+ * Ein Lauf des Anbieters (aus ew_takt(), nach dem Versand an das Gateway). $roh = die Stationsantwort, wenn sie in
+ * diesem Lauf frisch war, sonst null; $zaehler = derselbe Zaehler wie status/zaehler. Ohne aktive Zuordnung raeumt
+ * der Lauf nur verwaiste Themen ab. Rueckgabe: der neue Stand von haus_lauf.json oder null.
+ */
+function ew_haus_lauf(array $c, $roh, $alter, $zaehler, $jetzt)
+{
+    $p = ew_paths();
+    if ($p['datadir'] === '' || $p['lbhome'] === '') {
+        return null;
+    }
+    $sp = ew_haus_sperre();
+    if ($sp === null) {
+        return null;
+    }
+    list($liste, $schlecht) = ew_haus_zuordnung($c);
+    $themen = ew_haus_themen_lesen();
+    $lauf = ew_haus_lauf_lesen();
+    $merk = (isset($lauf['werte']) && is_array($lauf['werte'])) ? $lauf['werte'] : array();
+    $lauf['werte'] = $merk;
+    ew_haus_abraeumen($themen, $liste, $lauf, $jetzt, false);
+    $lauf['beanstandet'] = $schlecht;
+    if (!$liste) {
+        $lauf['aktiv'] = array();
+        unset($lauf['werte'], $lauf['voll_ts']);
+        ew_json_schreiben(ew_haus_lauf_datei(), $lauf);
+        ew_haus_freigeben($sp);
+        return $lauf;
+    }
+    $d = is_string($roh) ? json_decode($roh, true) : null;
+    list($werte, $felder, $namen) = ew_haus_werte($liste, is_array($d) ? $d : null, $alter, $jetzt, $themen);
+    $voll_ts = isset($lauf['voll_ts']) ? (int) $lauf['voll_ts'] : 0;
+    $voll = !isset($lauf['voll_ts']) || $voll_ts <= 0 || $voll_ts > $jetzt || $jetzt - $voll_ts >= EW_HAUS_VOLL;
+    $sel = ew_haus_auswahl($werte, $lauf['werte'], $voll);
+    $zt = array();
+    foreach ($liste as $z) {
+        $zt['haus/' . $z['familie'] . '/zaehler/' . EW_HAUS_ANBIETER] = array((string) ((((int) $zaehler) % 1000 + 1000) % 1000), false);
+    }
+    $lese = array();
+    foreach (array_keys($sel) as $t) {
+        if (!isset($themen[$t])) {
+            $b = substr($t, 0, strrpos($t, '/') + 1);
+            $lese[$t] = true;
+            $lese[$b . 'anbieter'] = true;
+        }
+    }
+    $konflikte = array();
+    $endgueltig = $sel;
+    $entscheiden = function ($gelesen) use ($sel, $themen, $zt, &$konflikte, &$endgueltig) {
+        list($endgueltig, $konflikte) = ew_haus_fremd($sel, $themen, $gelesen);
+        return $endgueltig + $zt;
+    };
+    $r = ew_haus_sitzung(array(), array_keys($lese), $entscheiden);
+    $lauf['sitzung'] = array('zeit' => $jetzt, 'lage' => $r['lage'], 'gesendet' => (int) $r['gesendet'],
+                             'voll' => $voll ? 1 : 0, 'werte' => count($endgueltig));
+    if ($r['lage'] === 'ok') {
+        $neu = false;
+        foreach ($r['themen'] as $t) {
+            if (isset($endgueltig[$t])) {
+                $lauf['werte'][$t] = $endgueltig[$t][0];
+                if (!isset($themen[$t]) || $themen[$t] !== $namen[substr($t, 0, strrpos($t, '/') + 1)]) {
+                    $themen[$t] = $namen[substr($t, 0, strrpos($t, '/') + 1)];
+                    $neu = true;
+                }
+            }
+        }
+        if ($neu) {
+            ew_haus_themen_schreiben($themen);
+        }
+        if ($voll) {
+            $lauf['voll_ts'] = $jetzt;
+        }
+        $lauf['konflikte'] = $konflikte;
+    }
+    if (is_array($d)) {
+        $lauf['felder'] = $felder;
+    }
+    $aktiv = array();
+    foreach ($liste as $z) {
+        $aktiv[] = 'haus/' . $z['familie'] . '/' . $z['name'];
+    }
+    $lauf['aktiv'] = $aktiv;
+    $alt = isset($lauf['log_lage']) ? (string) $lauf['log_lage'] : '';
+    if ($alt !== $r['lage']) {
+        ew_log($r['lage'] === 'ok' ? 'Haus-Themen: Sitzung am Broker ok (' . implode(', ', $aktiv) . ').'
+            : 'Haus-Themen: Broker nicht erreichbar (' . $r['lage'] . ') - naechster Versuch in einer Minute.');
+        $lauf['log_lage'] = $r['lage'];
+    }
+    $kalt = isset($lauf['log_konflikte']) ? (string) $lauf['log_konflikte'] : '';
+    if ($r['lage'] === 'ok' && implode(', ', $konflikte) !== $kalt) {
+        if ($konflikte) {
+            ew_log('Haus-Themen: nicht gesendet, ein anderer Anbieter haelt den Wert: ' . implode(', ', $konflikte) . '.');
+        }
+        $lauf['log_konflikte'] = implode(', ', $konflikte);
+    }
+    ew_json_schreiben(ew_haus_lauf_datei(), $lauf);
+    ew_haus_freigeben($sp);
+    return $lauf;
+}
+
+/** MQTT aus (ew_takt() endet frueh): gemerkte Themen trotzdem abraeumen, hoechstens alle EW_HAUS_LEEREN_ABSTAND s. */
+function ew_haus_nachraeumen(array $c, $jetzt)
+{
+    $f = ew_haus_datei();
+    if ($f === '' || !is_file($f)) {
+        return null;
+    }
+    $sp = ew_haus_sperre();
+    if ($sp === null) {
+        return null;
+    }
+    $themen = ew_haus_themen_lesen();
+    $lauf = ew_haus_lauf_lesen();
+    list($liste) = ew_haus_zuordnung($c);
+    $e = $themen ? ew_haus_abraeumen($themen, $liste, $lauf, $jetzt, false) : null;
+    if ($e !== null) {
+        ew_json_schreiben(ew_haus_lauf_datei(), $lauf);
+    }
+    ew_haus_freigeben($sp);
+    return $e;
+}
+
+/**
+ * Folgen einer Aenderung (Speichern im Reiter MQTT, Zurueckspielen einer Sicherung): der naechste Minutenlauf schickt
+ * den vollen Satz; was nicht mehr gesendet wird, wird sofort mit Ruecklesen abgeraeumt. Rueckgabe array(Meldung oder
+ * '', ok|warn).
+ */
+function ew_haus_folgen(array $neu)
+{
+    $sp = ew_haus_sperre();
+    if ($sp === null) {
+        return array('', 'ok');
+    }
+    $themen = ew_haus_themen_lesen();
+    $lauf = ew_haus_lauf_lesen();
+    unset($lauf['werte'], $lauf['voll_ts']);
+    list($liste) = ew_haus_zuordnung($neu);
+    $n = count(ew_haus_verwaist($themen, $liste));
+    $e = $themen ? ew_haus_abraeumen($themen, $liste, $lauf, time(), true) : null;
+    ew_json_schreiben(ew_haus_lauf_datei(), $lauf);
+    ew_haus_freigeben($sp);
+    if ($e === null) {
+        return array('', 'ok');
+    }
+    if ($e['lage'] === 'geleert') {
+        return array(sprintf(ew_t('HAUS.M_GELEERT'), $n), 'ok');
+    }
+    if ($e['lage'] === 'nichts') {
+        return array(ew_t('HAUS.M_NICHTS'), 'ok');
+    }
+    if ($e['lage'] === 'rest') {
+        return array(sprintf(ew_t('HAUS.M_REST'), implode(', ', $e['offen'])), 'warn');
+    }
+    return array(sprintf(ew_t('HAUS.M_KEIN_BROKER'), $e['grund']), 'warn');
+}
+
+/** Deinstallation (bin/ew_takt.php --haus-leeren): alle gemerkten Themen mit Ruecklesen abraeumen. Ausgabe fuer das
+ *  Installationsprotokoll; Rueckgabe immer 0 - die Deinstallation laeuft weiter. */
+function ew_haus_leeren_ausgabe()
+{
+    $sp = ew_haus_sperre();
+    $themen = ew_haus_themen_lesen();
+    if (!$themen) {
+        echo "<INFO> haus/wetter, haus/klima: diese Installation war nie Anbieter - nichts zu leeren.\n";
+        ew_haus_freigeben($sp);
+        return 0;
+    }
+    $e = ew_haus_leeren(array_keys($themen));
+    if ($e['lage'] === 'geleert' || $e['lage'] === 'nichts') {
+        ew_haus_themen_schreiben(array());
+    }
+    ew_haus_freigeben($sp);
+    if ($e['lage'] === 'geleert') {
+        echo '<OK> haus/wetter, haus/klima: geleert (vom Broker bestaetigt, ' . count($themen) . " Themen).\n";
+    } elseif ($e['lage'] === 'nichts') {
+        echo '<INFO> haus/wetter, haus/klima: nichts zu leeren (der Broker haelt keines der ' . count($themen)
+            . " Themen zurueck).\n";
+    } elseif ($e['lage'] === 'rest') {
+        echo '<WARNING> haus/wetter, haus/klima: noch zurueckbehalten - bitte von Hand leeren: '
+            . implode(', ', $e['offen']) . " (mosquitto_pub -r -n -t <thema>)\n";
+    } else {
+        echo '<WARNING> haus/wetter, haus/klima: der Broker war nicht erreichbar (' . $e['grund']
+            . ') - bitte von Hand leeren: ' . implode(', ', array_keys($themen)) . " (mosquitto_pub -r -n -t <thema>)\n";
+    }
+    return 0;
+}
+
+/** Die Themenliste fuer den Reiter MQTT: je aktivem Namen die Felder, zeit, anbieter und der Zaehler der Familie.
+ *  Rueckgabe array von array(Thema, Sprachschluessel der Bedeutung, retained). */
+function ew_haus_themenliste(array $c)
+{
+    list($liste) = ew_haus_zuordnung($c);
+    $fu = ew_haus_fuehler();
+    $aus = array();
+    $zaehler = array();
+    foreach ($liste as $z) {
+        $b = 'haus/' . $z['familie'] . '/' . $z['name'] . '/';
+        foreach ($fu[$z['fuehler']][2] as $f) {
+            $aus[] = array($b . $f[0], 'HAUS.F_' . strtoupper($f[0]), true);
+        }
+        $aus[] = array($b . 'zeit', 'HAUS.F_ZEIT', true);
+        $aus[] = array($b . 'anbieter', 'HAUS.F_ANBIETER', true);
+        $zaehler['haus/' . $z['familie'] . '/zaehler/' . EW_HAUS_ANBIETER] = true;
+    }
+    foreach (array_keys($zaehler) as $t) {
+        $aus[] = array($t, 'HAUS.F_ZAEHLER', false);
+    }
+    return $aus;
+}
+
+/**
+ * Prueflinie "Haus-Themen" des Reiters Test. Mit $messen (nur bei geoeffnetem Reiter Test) liest sie am Broker zurueck,
+ * ob je aktivem Namen haus/<familie>/<name>/anbieter = ecowittweiche und zeit = dem zuletzt gesendeten Wert
+ * zurueckbehalten sind - die Wirkung, nicht der Rueckgabewert. Rueckgabe array(ok|fehl|hinweis, Text).
+ */
+function ew_pruef_haus(array $c, $messen)
+{
+    list($liste, $schlecht) = ew_haus_zuordnung($c);
+    $themen = ew_haus_themen_lesen();
+    $lauf = ew_haus_lauf_lesen();
+    $offen = ew_haus_verwaist($themen, $liste);
+    if ($offen) {
+        $l = isset($lauf['leeren']['lage']) ? (string) $lauf['leeren']['lage'] : '-';
+        return array('fehl', sprintf(ew_t('HAUS.T_OFFEN'), count($offen), implode(', ', array_slice($offen, 0, 6))
+            . (count($offen) > 6 ? ' ...' : ''), $l));
+    }
+    $an = !empty($c['haus_wetter_ein']) || !empty($c['haus_klima_ein']);
+    if (!$an) {
+        return array('hinweis', ew_t('HAUS.T_AUS'));
+    }
+    if (empty($c['mqtt_ein'])) {
+        return array('hinweis', ew_t('HAUS.T_MQTT_AUS'));
+    }
+    if ($schlecht) {
+        return array('fehl', sprintf(ew_t('HAUS.T_NAME_SCHLECHT'), implode(', ', $schlecht)));
+    }
+    if (!$liste) {
+        return array('fehl', ew_t('HAUS.T_KEIN_FUEHLER'));
+    }
+    $sz = (isset($lauf['sitzung']) && is_array($lauf['sitzung'])) ? $lauf['sitzung'] : array();
+    if (!isset($sz['zeit'], $sz['lage'])) {
+        return array('fehl', ew_t('HAUS.T_NIE'));
+    }
+    $alter = time() - (int) $sz['zeit'];
+    if ((string) $sz['lage'] !== 'ok') {
+        return array('fehl', sprintf(ew_t('HAUS.T_BROKER'), (string) $sz['lage'], ew_alter_text($alter)));
+    }
+    if ($alter < 0 || $alter > EW_TAKT_ALT) {
+        return array('fehl', sprintf(ew_t('HAUS.T_ALT'), ew_alter_text($alter)));
+    }
+    if (!empty($lauf['konflikte']) && is_array($lauf['konflikte'])) {
+        return array('fehl', sprintf(ew_t('HAUS.T_KONFLIKT'), implode(', ', $lauf['konflikte'])));
+    }
+    $namen = array();
+    foreach ($liste as $z) {
+        $namen[] = 'haus/' . $z['familie'] . '/' . $z['name'];
+    }
+    if (!$messen) {
+        return array('hinweis', sprintf(ew_t('HAUS.T_NUR_OFFEN'), implode(', ', $namen)));
+    }
+    $lese = array();
+    foreach ($namen as $b) {
+        $lese[] = $b . '/anbieter';
+        $lese[] = $b . '/zeit';
+    }
+    $r = ew_haus_sitzung(array(), $lese);
+    if ($r['lage'] !== 'ok') {
+        return array('fehl', sprintf(ew_t('HAUS.T_LESEN'), $r['lage']));
+    }
+    $merk = (isset($lauf['werte']) && is_array($lauf['werte'])) ? $lauf['werte'] : array();
+    $fehlt = array();
+    $gut = array();
+    foreach ($namen as $b) {
+        $a = isset($r['werte'][$b . '/anbieter']) ? $r['werte'][$b . '/anbieter'] : '';
+        $zt = isset($r['werte'][$b . '/zeit']) ? $r['werte'][$b . '/zeit'] : '';
+        if ($a !== EW_HAUS_ANBIETER || $zt === '' || (isset($merk[$b . '/zeit']) && (string) $merk[$b . '/zeit'] !== $zt)) {
+            $fehlt[] = $b . ' (anbieter "' . ew_kurz($a, 30) . '", zeit "' . ew_kurz($zt, 12) . '")';
+        } else {
+            $gut[] = $b . ' (zeit ' . (ctype_digit($zt) ? date('d.m.Y H:i:s', (int) $zt) : $zt) . ')';
+        }
+    }
+    if ($fehlt) {
+        return array('fehl', sprintf(ew_t('HAUS.T_WIRKUNG_FEHLT'), implode(', ', $fehlt)));
+    }
+    return array('ok', sprintf(ew_t('HAUS.T_OK'), implode(', ', $gut), ew_alter_text($alter)));
 }
 
 /* ==================================================================

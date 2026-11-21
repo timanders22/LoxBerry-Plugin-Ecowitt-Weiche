@@ -43,6 +43,11 @@ if ($ew_geladen === '' || !function_exists('ew_takt')) {
     exit(1);
 }
 
+/* 0.9.38: Deinstallation - die gemerkten Haus-Themen mit Ruecklesen am Broker abraeumen (uninstall/uninstall). */
+if (isset($argv[1]) && $argv[1] === '--haus-leeren') {
+    exit(ew_haus_leeren_ausgabe());
+}
+
 if (isset($argv[1]) && $argv[1] === '--selbsttest') {
     $ew_fehl = 0;
     $ew_zeile = function ($ok, $text) use (&$ew_fehl) {
@@ -75,6 +80,23 @@ if (isset($argv[1]) && $argv[1] === '--selbsttest') {
         . ' (erwartet 37 = 21 Kern + 5 wahlweise + 7 Batterie + 4 Bodensensor)');
     $ew_zeile(ew_mqtt_gateway_name('status/zaehler') === 'ecowittweiche_status_zaehler', 'Gateway-Name: '
         . ew_mqtt_gateway_name('status/zaehler'));
+    /* 0.9.38: Haus-Themen an der nachgebildeten Antwort - Werte, Rundung und Namensregel. */
+    list($ew_hw) = ew_haus_werte(array(array('fuehler' => 'aussen', 'familie' => 'wetter', 'name' => 'ecowitt'),
+        array('fuehler' => 'basis', 'familie' => 'klima', 'name' => 'ecowitt_basis')),
+        json_decode(ew_mqtt_probeantwort(), true), 0, 1700000000, array());
+    $ew_hs = array('haus/wetter/ecowitt/temperatur' => '12.3', 'haus/wetter/ecowitt/feuchte' => '78',
+        'haus/wetter/ecowitt/druck' => '985.3', 'haus/wetter/ecowitt/wind_kmh' => '4.3',
+        'haus/wetter/ecowitt/boeen_kmh' => '7.2', 'haus/wetter/ecowitt/windrichtung_grad' => '215',
+        'haus/wetter/ecowitt/regen_mm_h' => '1.2', 'haus/wetter/ecowitt/regen_heute_mm' => '0.4',
+        'haus/wetter/ecowitt/uv' => '1', 'haus/wetter/ecowitt/strahlung_wm2' => '123',
+        'haus/wetter/ecowitt/zeit' => '1700000000', 'haus/wetter/ecowitt/anbieter' => 'ecowittweiche',
+        'haus/klima/ecowitt_basis/temperatur' => '21.4', 'haus/klima/ecowitt_basis/feuchte' => '52',
+        'haus/klima/ecowitt_basis/druck' => '985.3', 'haus/klima/ecowitt_basis/zeit' => '1700000000',
+        'haus/klima/ecowitt_basis/anbieter' => 'ecowittweiche');
+    $ew_zeile($ew_hw === $ew_hs, 'Haus-Themen der nachgebildeten Antwort: ' . count($ew_hw) . ' Werte (erwartet '
+        . count($ew_hs) . ', alle gleich)');
+    $ew_zeile(ew_haus_name("Garten S\u{00FC}d/Ost") === 'garten_sued_ost' && !ew_haus_name_taugt('Garten')
+        && !ew_haus_name_taugt('zaehler') && ew_haus_name_taugt('ecowitt_basis'), 'Haus-Themen, Namensregel');
     echo $ew_fehl ? "SELBSTTEST: $ew_fehl Befund(e)\n" : "SELBSTTEST: in Ordnung\n";
     exit($ew_fehl ? 1 : 0);
 }

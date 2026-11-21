@@ -282,28 +282,71 @@ if ($ew_post && isset($_POST['token_weg'])) {
  * Abo-Datei fuer Gateway V1 wird auf <praefix>/# nachgezogen (Entwurf 2.3/2.7). */
 if ($ew_post && isset($_POST['mqtt_speichern'])) {
     $ew_neu = $ew_cfg;
+    /* 0.9.38: alle Beanstandungen sammeln (Praefix und Haus-Themen) - bei einer einzigen wird GAR NICHTS gespeichert. */
+    $ew_mangel = array();
     $ew_neu['mqtt_ein'] = empty($_POST['mqtt_ein']) ? 0 : 1;
     $ew_roh = ew_feld('mqtt_praefix');
     if ($ew_roh === '') {
         $ew_neu['mqtt_praefix'] = EW_MQTT_PRAEFIX_VORGABE;
         $ew_hinweise[] = sprintf(ew_t('MQTT.PRAEFIX_VORGABE'), EW_MQTT_PRAEFIX_VORGABE);
     } elseif (!ew_mqtt_praefix_taugt($ew_roh)) {
-        $ew_fehler[] = array('kopf' => ew_t('TEXT.NICHT_GESPEICHERT'),
-            'punkte' => array(sprintf(ew_t('MQTT.PRAEFIX_UNGUELTIG'), ew_kurz($ew_roh, 60))));
-        $ew_neu = null;
+        $ew_mangel[] = sprintf(ew_t('MQTT.PRAEFIX_UNGUELTIG'), ew_kurz($ew_roh, 60));
     } else {
         $ew_neu['mqtt_praefix'] = $ew_roh;
     }
-    if ($ew_neu !== null) {
-        if (ew_config_speichern($ew_neu)) {
-            $ew_meldung = ew_t('MQTT.GESPEICHERT');
-            ew_takt_voll_merken();
-            if (!ew_abo_schreiben($ew_neu)) {
-                $ew_hinweise[] = ew_t('MQTT.ABO_NICHT_GESCHRIEBEN');
-            }
+    /* 0.9.38 (Entscheidung des Hausherrn 21.11.2026): Haus-Themen haus/wetter und haus/klima. Zwei Haken, je Fuehler
+       Bereich und Name. Ein Name, den die Namensregel aendern wuerde, wird abgewiesen und mit der passenden
+       Schreibweise genannt - nie still zurechtgebogen (Regeln/05). */
+    foreach (ew_haus_familien() as $ew_hf) {
+        $ew_neu['haus_' . $ew_hf . '_ein'] = empty($_POST['haus_' . $ew_hf . '_ein']) ? 0 : 1;
+    }
+    $ew_hbelegt = array();
+    foreach (array_keys(ew_haus_fuehler()) as $ew_hk) {
+        $ew_hl = ew_t('HAUS.FUEHLER_' . strtoupper($ew_hk));
+        $ew_hb = ew_feld('haus_' . $ew_hk . '_bereich');
+        $ew_hn = ew_feld('haus_' . $ew_hk . '_name');
+        $ew_hok = true;
+        if (!in_array($ew_hb, array('aus', 'wetter', 'klima'), true)) {
+            $ew_mangel[] = sprintf(ew_t('HAUS.BEREICH_UNGUELTIG'), $ew_hl, ew_kurz($ew_hb, 20));
+            $ew_hok = false;
         } else {
-            $ew_fehler[] = ew_t('TEXT.SICH_SCHREIBFEHLER');
+            $ew_neu['haus_' . $ew_hk . '_bereich'] = $ew_hb;
         }
+        if (!ew_haus_name_taugt($ew_hn)) {
+            $ew_vor = ew_haus_name($ew_hn);
+            $ew_mangel[] = sprintf(ew_t('HAUS.NAME_UNGUELTIG'), $ew_hl, ew_kurz($ew_hn, 60),
+                ew_haus_name_taugt($ew_vor) ? $ew_vor : '-');
+            $ew_hok = false;
+        } else {
+            $ew_neu['haus_' . $ew_hk . '_name'] = $ew_hn;
+        }
+        if ($ew_hok && $ew_hb !== 'aus') {
+            if (isset($ew_hbelegt[$ew_hb . '/' . $ew_hn])) {
+                $ew_mangel[] = sprintf(ew_t('HAUS.NAME_DOPPELT'), $ew_hl, $ew_hn);
+            }
+            $ew_hbelegt[$ew_hb . '/' . $ew_hn] = true;
+        }
+    }
+    if ($ew_mangel) {
+        $ew_fehler[] = array('kopf' => ew_t('TEXT.NICHT_GESPEICHERT'), 'punkte' => $ew_mangel);
+    } elseif (ew_config_speichern($ew_neu)) {
+        $ew_meldung = ew_t('MQTT.GESPEICHERT');
+        ew_takt_voll_merken();
+        if (!ew_abo_schreiben($ew_neu)) {
+            $ew_hinweise[] = ew_t('MQTT.ABO_NICHT_GESCHRIEBEN');
+        }
+        /* 0.9.38: was nicht mehr gesendet wird (Haken aus, Bereich oder Name geaendert, MQTT aus), sofort mit
+           Ruecklesen abraeumen; der naechste Minutenlauf sendet den vollen Satz. */
+        list($ew_hm, $ew_hlage) = ew_haus_folgen($ew_neu);
+        if ($ew_hm !== '') {
+            if ($ew_hlage === 'ok') {
+                $ew_hinweise[] = $ew_hm;
+            } else {
+                $ew_fehler[] = $ew_hm;
+            }
+        }
+    } else {
+        $ew_fehler[] = ew_t('TEXT.SICH_SCHREIBFEHLER');
     }
     $ew_cfg = ew_config();
 }
@@ -464,7 +507,8 @@ $ew_rahmen = class_exists('LBWeb', false);
 
 
 if ($ew_rahmen) {
-    LBWeb::lbheader(ew_t('ALLGEMEIN.TITEL'), 'https://wiki.loxberry.de/', 'help.html');
+    require_once __DIR__ . '/fassung.php';   // Fassung im Titel: gemeinsames Stueck fassung.php (21.11.2026)
+    LBWeb::lbheader(plugin_kopftitel(ew_t('ALLGEMEIN.TITEL'), __DIR__), 'https://wiki.loxberry.de/', 'help.html');
 }
 
 ?>
@@ -496,6 +540,17 @@ if ($ew_rahmen) {
 .sm-tbl th { background: #eef3e6; font-weight: 600; }
 .sm-breit { overflow-x: auto; -webkit-overflow-scrolling: touch; margin: 10px 0; }
 .sm-breit .sm-tbl { margin: 0; min-width: 760px; }
+/* 0.9.38: Auswahlfeld (Bereich der Haus-Themen im Reiter MQTT) - Regel wortgetreu aus VORLAGE_hausstandard.css.html */
+.sm-wrap select {
+    appearance: none; -webkit-appearance: none; -moz-appearance: none;
+    background-image: url("data:image/svg+xml;charset=UTF-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='9' viewBox='0 0 14 9'%3E%3Cpath d='M1 1l6 6 6-6' fill='none' stroke='%234f7d17' stroke-width='2'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 10px center;
+    padding-right: 32px; cursor: pointer; }
+/* BERICHTIGT 19.08.2026: hier stand '.sm-tabelle select'. Dieselbe tote
+   Klasse wie oben - die engere Innenabstands-Regel fuer Auswahlfelder IN
+   Tabellen hat nie gewirkt. Wer den Block neu kopiert, bekommt sie jetzt;
+   die Auswahlfelder in Tabellen werden dadurch etwas schmaler bedruckt. */
+.sm-tbl select { padding-right: 28px; background-position: right 7px center; }
 .sm-mono { font-family: Consolas, "Courier New", monospace; background: #f0f0f0;
     padding: 1px 4px; border-radius: 3px; font-size: 0.94em; word-break: break-all; }
 .sm-pre { background: #f4f4f4; border: 1px solid #ccc; padding: 10px; font-size: 0.85em;
@@ -745,6 +800,41 @@ list($ew_mq_abo_da, $ew_mq_abo_ok) = ew_abo_pruefen($ew_cfg); ?>
   <input data-role="none" type="text" name="mqtt_praefix" value="<?= ew_e(isset($ew_cfg['mqtt_praefix']) ? $ew_cfg['mqtt_praefix'] : EW_MQTT_PRAEFIX_VORGABE) ?>" placeholder="<?= ew_e(EW_MQTT_PRAEFIX_VORGABE) ?>">
   <p class="sm-hilfe"><?php echo ew_t('MQTT.H_PRAEFIX'); ?></p>
 </div>
+<?php /* 0.9.38 (Entscheidung des Hausherrn 21.11.2026): Haus-Themen haus/wetter und haus/klima fuer andere Plugins -
+         im selben Formular wie MQTT (Regeln/07 7: MQTT wohnt im Reiter MQTT). Fuehler, Bereiche und Felder aus
+         ew_haus_fuehler(), die zuletzt gelieferten Felder aus haus_lauf.json; die Seite fragt die Station nicht. */
+$ew_hlauf = ew_haus_lauf_lesen(); ?>
+<h3><?php echo ew_t('HAUS.H'); ?></h3>
+<div class="sm-step"><?php echo ew_t('HAUS.ERKLAERUNG'); ?></div>
+<div class="sm-feld">
+  <label><input data-role="none" type="checkbox" name="haus_wetter_ein" value="1"<?= !empty($ew_cfg['haus_wetter_ein']) ? ' checked' : '' ?>>
+    <?php echo ew_t('HAUS.L_WETTER'); ?></label>
+  <p class="sm-hilfe"><?php echo ew_t('HAUS.H_WETTER'); ?></p>
+</div>
+<div class="sm-feld">
+  <label><input data-role="none" type="checkbox" name="haus_klima_ein" value="1"<?= !empty($ew_cfg['haus_klima_ein']) ? ' checked' : '' ?>>
+    <?php echo ew_t('HAUS.L_KLIMA'); ?></label>
+  <p class="sm-hilfe"><?php echo ew_t('HAUS.H_KLIMA'); ?></p>
+</div>
+<div class="sm-breit">
+<table class="sm-tbl">
+  <tr><th><?php echo ew_t('HAUS.SP_FUEHLER'); ?></th><th><?php echo ew_t('HAUS.SP_BEREICH'); ?></th><th><?php echo ew_t('HAUS.SP_NAME'); ?></th><th><?php echo ew_t('HAUS.SP_FELDER'); ?></th></tr>
+<?php foreach (ew_haus_fuehler() as $ew_hk => $ew_hd) {
+    $ew_hb = isset($ew_cfg['haus_' . $ew_hk . '_bereich']) ? (string) $ew_cfg['haus_' . $ew_hk . '_bereich'] : $ew_hd[0];
+    $ew_hn = isset($ew_cfg['haus_' . $ew_hk . '_name']) ? (string) $ew_cfg['haus_' . $ew_hk . '_name'] : $ew_hd[1];
+    $ew_hg = (isset($ew_hlauf['felder'][$ew_hk]) && is_array($ew_hlauf['felder'][$ew_hk])) ? $ew_hlauf['felder'][$ew_hk] : null; ?>
+  <tr><td><?php echo ew_t('HAUS.FUEHLER_' . strtoupper($ew_hk)); ?></td>
+      <td><select data-role="none" name="haus_<?= ew_e($ew_hk) ?>_bereich">
+<?php     foreach (array('aus', 'wetter', 'klima') as $ew_ho) { ?>
+        <option value="<?= ew_e($ew_ho) ?>"<?= $ew_hb === $ew_ho ? ' selected' : '' ?>><?php echo ew_t('HAUS.BEREICH_' . strtoupper($ew_ho)); ?></option>
+<?php     } ?>
+      </select></td>
+      <td><input data-role="none" type="text" name="haus_<?= ew_e($ew_hk) ?>_name" value="<?= ew_e($ew_hn) ?>" maxlength="40"></td>
+      <td class="sm-mono"><?= $ew_hg === null ? ew_e(ew_t('HAUS.FELDER_UNBEKANNT')) : ew_e($ew_hg ? implode(', ', $ew_hg) : '-') ?></td></tr>
+<?php } ?>
+</table>
+</div>
+<p class="sm-hilfe"><?php echo ew_t('HAUS.H_NAME'); ?></p>
 <div class="sm-knopfreihe">
   <button data-role="none" class="sm-btn sm-b-aktion" type="submit" name="mqtt_speichern" value="1"><?php echo ew_t('MQTT.K_SPEICHERN'); ?></button>
 </div>
@@ -788,6 +878,24 @@ if (empty($ew_cfg['mqtt_ein'])) { ?>
 <?php } ?>
 </table>
 </div>
+
+<?php /* 0.9.38: die Haus-Themen, die mit der gespeicherten Einstellung hinausgehen - aus ew_haus_themenliste(), derselben
+         Zuordnung, nach der der Minutentakt sendet. */
+$ew_htl = ew_haus_themenliste($ew_cfg); ?>
+<h3><?php echo ew_t('HAUS.H_THEMEN'); ?></h3>
+<p class="sm-hilfe"><?php echo ew_t('HAUS.THEMEN_HILFE'); ?></p>
+<?php if (!$ew_htl) { ?>
+<p class="sm-grau"><?php echo ew_t('HAUS.THEMEN_KEINE'); ?></p>
+<?php } else { ?>
+<div class="sm-breit">
+<table class="sm-tbl">
+  <tr><th><?php echo ew_t('MQTT.T_THEMA'); ?></th><th><?php echo ew_t('MQTT.T_BEDEUTUNG'); ?></th><th><?php echo ew_t('MQTT.T_RETAIN'); ?></th></tr>
+<?php foreach ($ew_htl as $ew_hz) { ?>
+  <tr><td class="sm-mono"><?= ew_e($ew_hz[0]) ?></td><td><?php echo ew_t($ew_hz[1]); ?></td><td><?php echo ew_t($ew_hz[2] ? 'HAUS.RETAIN_JA' : 'MQTT.RETAIN_NIE'); ?></td></tr>
+<?php } ?>
+</table>
+</div>
+<?php } ?>
 </div>
 
 <!-- ================= Einbindung in Loxone ================= -->
@@ -1153,6 +1261,8 @@ if (is_array($ew_proj)) {
 <?php } ?>
 <div class="sm-hinweis"><?php echo ew_t('TEXT.LOX_EWOK'); ?></div>
 </details>
+<?php /* 0.9.38: die Haus-Themen sind fuer Plugins, nicht fuer den Miniserver. */ ?>
+<div class="sm-hinweis"><?php echo ew_t('HAUS.EINBINDUNG'); ?></div>
 </div>
 
 <!-- ================= Test und Protokoll ================= -->
@@ -1299,6 +1409,10 @@ $ew_r = ew_pruef_mqtt_v2($ew_cfg);
 $ew_selbst[] = array('was' => ew_t('TEXT.S_MQTT_V2'), 'lage' => $ew_r[0], 'wie' => $ew_r[1]);
 $ew_r = ew_pruef_mqtt_einheiten();
 $ew_selbst[] = array('was' => ew_t('TEXT.S_MQTT_EINHEIT'), 'lage' => $ew_r[0], 'wie' => $ew_r[1]);
+/* 0.9.38: Haus-Themen haus/wetter und haus/klima - Wirkung: am Broker zurueckgelesen (nur bei geoeffnetem Reiter Test,
+   alle Reiter werden mitgerendert). */
+$ew_r = ew_pruef_haus($ew_cfg, $ew_tab === 'tab-test');
+$ew_selbst[] = array('was' => ew_t('TEXT.S_HAUS'), 'lage' => $ew_r[0], 'wie' => $ew_r[1]);
 
 $ew_cfgdatei = ew_paths()['cfgdatei'];
 $ew_schreib = is_writable(is_file($ew_cfgdatei) ? $ew_cfgdatei : dirname($ew_cfgdatei));

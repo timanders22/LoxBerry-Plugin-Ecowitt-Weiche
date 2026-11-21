@@ -118,6 +118,16 @@ if [ "$UPGRADE" = 1 ] && [ -f "$STB" ]; then
         echo "<WARNING> Der gesicherte Wechselzaehler liess sich nicht zurueckspielen: $STB"
     fi
 fi
+# 0.9.38: die gemerkten Haus-Themen (preupgrade.sh hat haus.json neben den Ordner gelegt) - nur bei Marke zurueck,
+# wie der Wechselzaehler; bei einer Neuinstallation legt preinstall.sh eine liegengebliebene Sicherung als .alt beiseite.
+HTB="$BASE/data/plugins/$PFOLDER.haus.json"
+if [ "$UPGRADE" = 1 ] && [ -f "$HTB" ]; then
+    if mv -f "$HTB" "$PDATA/haus.json" 2>/dev/null; then
+        echo "<OK> Gemerkte Haus-Themen aus der Sicherung uebernommen."
+    else
+        echo "<WARNING> Die gemerkten Haus-Themen liessen sich nicht zurueckspielen: $HTB"
+    fi
+fi
 # Eine unlesbare Konfiguration, die preupgrade.sh ohne Zweitschrift
 # beiseitegelegt hat (I4), kommt als ecowitt.json.kaputt zurueck; der
 # Reiter Test nennt sie.

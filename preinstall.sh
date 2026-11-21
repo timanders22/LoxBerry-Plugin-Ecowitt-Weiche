@@ -52,7 +52,8 @@ BEISEITE=""
 FEST=""
 for ZIEL in "$BASE/config/plugins/$PFOLDER.backup.json" \
             "$BASE/config/plugins/$PFOLDER.kaputt.json" \
-            "$BASE/data/plugins/$PFOLDER.stand.json"; do
+            "$BASE/data/plugins/$PFOLDER.stand.json" \
+            "$BASE/data/plugins/$PFOLDER.haus.json"; do
     if [ -e "$ZIEL" ] || [ -L "$ZIEL" ]; then
         rm -rf "${ZIEL:?}.alt" 2>/dev/null
         if mv -f "$ZIEL" "$ZIEL.alt" 2>/dev/null; then

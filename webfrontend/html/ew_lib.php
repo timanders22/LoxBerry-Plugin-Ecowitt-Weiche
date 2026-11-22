@@ -2085,7 +2085,11 @@ function ew_sprachdatei()
         if ($lb !== '') {
             $kand[] = rtrim($lb, '/\\') . '/templates/plugins/' . basename(__DIR__);
         }
-        $kand[] = dirname(dirname(dirname(__DIR__))) . '/templates/plugins/' . basename(__DIR__);
+        /* 0.9.39 (Bauart FroniusWaechter 0.9.8, Befund Pruefung-Konstanten-Bau-20261122/bauart_lauf3.txt): installiert liegt
+         * diese Datei unter <LB>/webfrontend/html/plugins/<ordner> - vier Ebenen bis <LB>. Bis 0.9.38 waren es drei, der
+         * Kandidat zeigte auf <LB>/webfrontend/templates/... und traf nie; ohne LBHOMEDIR und general.json fiel die Suche
+         * auf den Archivpfad zurueck. */
+        $kand[] = dirname(dirname(dirname(dirname(__DIR__)))) . '/templates/plugins/' . basename(__DIR__);
         $kand[] = dirname(dirname(__DIR__)) . '/templates';
         $t = $kand[count($kand) - 1];
         foreach ($kand as $k) {

@@ -96,7 +96,7 @@ if (isset($argv[1]) && $argv[1] === '--selbsttest') {
     $ew_zeile($ew_hw === $ew_hs, 'Haus-Themen der nachgebildeten Antwort: ' . count($ew_hw) . ' Werte (erwartet '
         . count($ew_hs) . ', alle gleich)');
     $ew_zeile(ew_haus_name("Garten S\u{00FC}d/Ost") === 'garten_sued_ost' && !ew_haus_name_taugt('Garten')
-        && !ew_haus_name_taugt('zaehler') && ew_haus_name_taugt('ecowitt_basis'), 'Haus-Themen, Namensregel');
+        && !ew_haus_name_taugt('zaehler') && !ew_haus_name_taugt('datum_text') && ew_haus_name_taugt('ecowitt_basis'), 'Haus-Themen, Namensregel');
     echo $ew_fehl ? "SELBSTTEST: $ew_fehl Befund(e)\n" : "SELBSTTEST: in Ordnung\n";
     exit($ew_fehl ? 1 : 0);
 }

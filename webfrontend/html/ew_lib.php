@@ -3419,7 +3419,7 @@ function ew_haus_familien()
  *  Familien (ew_haus_name_taugt()), damit ein Name nicht beim Wechsel des Bereichs ungueltig wird. */
 function ew_haus_reserviert()
 {
-    return array('zaehler', 'anbieter', 'jetzt', 'heute', 'morgen', 'warnung', 'pollen', 'ok', 'datum', 'zeit', 'sprache');
+    return array('zaehler', 'anbieter', 'jetzt', 'heute', 'morgen', 'warnung', 'pollen', 'ok', 'datum', 'datum_text', 'zeit', 'sprache');
 }
 
 /**

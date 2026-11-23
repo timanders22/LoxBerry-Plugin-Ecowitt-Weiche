@@ -1,6 +1,6 @@
 # LoxBerry-Plugin „Ecowitt-Weiche"
 
-Version 0.9.39
+Version 0.9.40
 
 Holt die Messwerte einer Ecowitt-Wetterstation über **zwei** Netzwerkschnittstellen
 und reicht die Antwort derjenigen durch, die gerade trägt. In der Loxone-Projektdatei
@@ -15,6 +15,11 @@ Werte auf Wunsch auch jede Minute über MQTT in Virtuelle Eingänge – der Weg 
 * Schaltet nichts, misst nichts, speichert keine Messwerte zwischen.
 * Liefert die Vorlagen für Loxone Config (Zustandsbehälter und Beispiel-Stationsbehälter) und drei
   Baustein-Listen aus dem gemeinsamen Musterprojekt, je mit Bild und Schritt-für-Schritt-Anleitung.
+
+## Neu in 0.9.40
+
+- Berichtigt: Der Name `datum_text` ist für die Fühler unter haus/wetter/ und haus/klima/ jetzt gesperrt, wie die übrigen festen Namen des Plugins Weatherdata. Weatherdata sendet seit 0.9.13 das Thema `haus/wetter/datum_text`; ein Fühler mit diesem Namen wäre damit zusammengestoßen. Ein so benannter Fühler wird beim Speichern beanstandet, im Reiter Test rot gemeldet und bis zur Umbenennung nicht gesendet; seine zurückbehaltenen Themen meldet der Reiter Test als verwaist. Eine Anlage mit den vorbelegten Namen `ecowitt` und `ecowitt_basis` merkt davon nichts.
+- Reiter Test: Die Selbstprüfung der Namensregel prüft auch `datum_text`.
 
 ## Neu in 0.9.39
 

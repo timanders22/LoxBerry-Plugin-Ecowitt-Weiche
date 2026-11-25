@@ -174,6 +174,12 @@ function ew_feld($name)
  * gesammelt, und bei einer einzigen wird GAR NICHTS gespeichert. Leer
  * heisst bei Wartezeit und Pfad: die Vorgabe - und das wird gesagt. */
 /* Sprachansagen, eigenes Formular. Die Testansage spricht immer. */
+/* 0.9.41: Testmeldung an SignalBot (Knopf unter den Sprachansagen) - wie die Testansage darunter. */
+if ($ew_post && isset($_POST['meld_test'])) {
+    list($ew_at, $ew_ag) = ew_meld_test();
+    if ($ew_at) { $ew_hinweise[] = ew_t('SIGNALMELDUNG.T_OK'); } else { $ew_fehler[] = $ew_ag; }
+    $ew_tab = 'tab-settings';
+}
 if ($ew_post && isset($_POST['ansage_test'])) {
     list($ew_at, $ew_ag) = ew_ansage_test();
     if ($ew_at) { $ew_hinweise[] = ew_t('ANSAGEPLUGIN.M_TEST_OK'); } else { $ew_fehler[] = ew_t('ANSAGEPLUGIN.M_TEST_FEHL') . ' ' . $ew_ag; }
@@ -229,7 +235,10 @@ if ($ew_post && isset($_POST['speichern'])) {
        der im Namen sagt, was er tut. Ein Wert mit fremden Zeichen wird
        abgewiesen, nicht gekuerzt (Regeln/05 Z. 186). */
     $ew_roh = ew_feld('token');
-    if ($ew_roh !== '') {
+    /* 0.9.41 (Lade-Beanstandungen, Entscheidung des Hausherrn 24.11.2026, Bauart Shelly-Weiche 0.9.2): ein unveraendert
+       gesendetes Token - das gespeicherte, auch ein formwidriges - ist keine Eingabe; es behaelt seinen Dateiwert und
+       bleibt gemeldet, und das Formular speichert. Nur ein GEAENDERTES formwidriges Token wird abgewiesen. */
+    if ($ew_roh !== '' && $ew_roh !== (is_string($ew_cfg['token']) ? $ew_cfg['token'] : '')) {
         if (!ew_token_taugt($ew_roh)) {
             $ew_mangel[] = sprintf(ew_t('TEXT.TOKEN_UNGUELTIG'), strlen($ew_roh));
             $ew_falsch[] = 'token';
@@ -291,6 +300,12 @@ if ($ew_post && isset($_POST['mqtt_speichern'])) {
         $ew_hinweise[] = sprintf(ew_t('MQTT.PRAEFIX_VORGABE'), EW_MQTT_PRAEFIX_VORGABE);
     } elseif (!ew_mqtt_praefix_taugt($ew_roh)) {
         $ew_mangel[] = sprintf(ew_t('MQTT.PRAEFIX_UNGUELTIG'), ew_kurz($ew_roh, 60));
+    } elseif (hb_bereich($ew_roh) !== '' && $ew_roh !== (string) ew_mqtt_praefix($ew_cfg)) {   // nur NEUE Eingaben: ein schon gespeichertes Praefix sperrt das Speichern
+        // des Reiters nicht (Regeln/07; Bauart Einspeisebremse 0.9.25)
+        /* 0.9.41 (Entscheidung des Hausherrn 23.11.2026 "Nur gemeinsame Bereiche", Regeln/07): kein Praefix auf einem
+         * gemeinsamen Bereich unter haus/ - nur hier und beim Zurueckspielen, nicht in der Pruefung beim Lesen der
+         * Konfiguration: ein schon gespeichertes bleibt in Betrieb, der Reiter Test meldet es. */
+        $ew_mangel[] = sprintf(ew_t('HAUSBEREICH.FEHLER'), ew_kurz($ew_roh, 60), hb_bereich($ew_roh));
     } else {
         $ew_neu['mqtt_praefix'] = $ew_roh;
     }
@@ -442,7 +457,8 @@ if ($ew_post && isset($_POST['ew_zurueck'])) {
          * Wortzeichen-Schluessel heilt ew_config() nicht, und jeder Wert ist schon in der Normalform von
          * ew_wert_pruefen(). Die Meldungen sind Klartext und werden bei der Ausgabe maskiert (ew_e()). */
         $ew_b = ew_sicherung_klartext();
-        $ew_b['speichern'] = function ($neu) { return ew_config_speichern($neu); };
+        // 0.9.41: die Werte einer Sicherung sind ausdruecklich - kein "Dateiwert behalten" (Regeln/05)
+        $ew_b['speichern'] = function ($neu) { $ew_z = null; return ew_config_speichern($neu, $ew_z, false); };
         $ew_b['zweitschrift'] = function () { $p = ew_paths(); return array($p['cfgdatei'], $p['sicherung']); };
         $ew_b['nachziehen'] = 'ew_sicherung_nachziehen';
         $ew_b['log'] = 'ew_log';
@@ -473,6 +489,34 @@ if ($ew_post && (isset($_POST['vorlage_zustand']) || isset($_POST['vorlage_wette
     header('Content-Disposition: attachment; filename="' . $ew_vl[0] . '"');
     echo $ew_vl[1];
     exit;
+}
+
+/* ---------------- Lade-Beanstandungen: angezeigte Werte uebernehmen (0.9.41) ----------------
+   Nur mit gesetztem Haken (Entscheidung des Hausherrn 24.11.2026, "Haken im gelben Kasten"); ohne ihn bleibt die
+   Datei byte-gleich. Geschrieben ohne "Dateiwert behalten". Der Wachposten oben hat $_POST bei fremdem Merkmal schon
+   geleert. Der Minutentakt liest die Konfiguration bei jedem Lauf neu. */
+if ($ew_post && sicherung_lade_eingang($_POST) !== '') {
+    $ew_ladeb = ew_lade_b(false);
+    if (sicherung_lade_eingang($_POST) !== 'ja') {
+        $ew_fehler[] = sicherung_t('K_LADE_HAKEN_FEHLT', $ew_ladeb);
+    } else {
+        $ew_ld = ew_lade_roh();
+        $ew_lv = ew_config(false);
+        $ew_un = array();
+        if ($ew_ld !== null && is_array($ew_lv)) {
+            list($ew_lneu, $ew_un) = sicherung_lade_uebernehmen_stand($ew_ld, $ew_lv, sicherung_lade_beanstandungen($ew_ladeb, $ew_ld, $ew_lv));
+            $ew_lz = null;
+            if ($ew_un && !ew_config_speichern($ew_lneu, $ew_lz, false)) {
+                $ew_fehler[] = ew_t('TEXT.SICH_SCHREIBFEHLER');
+                $ew_un = array();
+            }
+        }
+        if ($ew_un) {
+            ew_log('Lade-Beanstandungen: angezeigte Werte uebernommen: ' . implode(', ', array_map('sicherung_name', $ew_un)));
+            $ew_meldung = sprintf(sicherung_t('K_LADE_UEBERNOMMEN', $ew_ladeb), implode(', ', $ew_un));
+        }
+    }
+    $ew_cfg = ew_config();
 }
 
 /* ---------------- Umleitung nach jedem POST (O1, PRG) ----------------
@@ -627,6 +671,9 @@ if ($ew_rahmen) {
 <div class="sm-fehler"><?= ew_e($ew_kopf) ?><ul><?php foreach ($ew_punkte as $ew_p) { if (is_string($ew_p)) { ?><li><?= ew_e($ew_p) ?></li><?php } } ?></ul></div>
 <?php } elseif (is_string($ew_fehler_m)) { ?><div class="sm-fehler"><?= ew_e($ew_fehler_m) ?></div><?php }
 } ?>
+<?php /* 0.9.41: Lade-Beanstandungen (Regeln/05) - gelber Kasten im Reiter Einstellungen; einmal je Aenderung ins Protokoll. */
+$ew_lade = ew_lade_beanstandungen();
+ew_lade_melden($ew_lade); ?>
 
 <?php /* Kopf (Entscheidung Nr. 43, seit 0.9.19): Statusuebersicht ueber den
    Reitern, immer sichtbar. Nur der Stand des letzten Abrufs aus stand.json
@@ -686,6 +733,8 @@ if (empty($ew_cfg['mqtt_ein'])) {
 <!-- ================= Einstellungen ================= -->
 <div class="sm-seite<?= $ew_tab === 'tab-settings' ? ' sm-active' : '' ?>" id="tab-settings">
 <div class="sm-hinweis"><?php echo ew_t('TEXT.WAS_IST_DAS'); ?></div>
+<?= sicherung_lade_kasten(ew_lade_b(true), isset($ew_lade) ? $ew_lade : ew_lade_beanstandungen(),
+        ew_fmt() . '<input data-role="none" type="hidden" name="activetab" value="tab-settings">') ?>
 <h2><?php echo ew_t('TEXT.H_EINSTELLUNGEN'); ?></h2>
 
 <div class="sm-step"><?php echo ew_t('TEXT.WARUM'); ?></div>
@@ -1354,6 +1403,12 @@ $ew_selbst[] = array(
    Aufruf vorfand - vor der Heilung (Regeln/05, Robonect 1.1.0). */
 $ew_r = ew_pruef_konfiguration(ew_config_zustand());
 $ew_selbst[] = array('was' => ew_t('TEXT.S_KONFIG'), 'lage' => $ew_r[0], 'wie' => $ew_r[1]);
+/* 0.9.41: Lade-Beanstandungen (Regeln/05, Sicherungsmodul 1.3.0) - rot, solange ein gespeicherter Wert beim Laden nicht so
+   gilt, wie er gespeichert ist. */
+$ew_ladeb = ew_lade_b(false);
+$ew_la = ew_lade_beanstandungen(null, false);
+$ew_selbst[] = array('was' => sicherung_t('K_LADE_FRAGE', $ew_ladeb), 'lage' => $ew_la ? 'fehl' : 'ok',
+    'wie' => $ew_la ? implode(' ', sicherung_lade_saetze($ew_ladeb, $ew_la)) : sicherung_t('K_LADE_KEINE', $ew_ladeb));
 
 /* Jedes POST-Formular dieser Datei traegt das Merkmal (gezaehlt, nicht
    angenommen; eine leere Menge ist ein Kreuz). */
@@ -1398,6 +1453,10 @@ $ew_selbst[] = array('was' => ew_t('TEXT.S_WARTEZEIT'), 'lage' => ew_wartezeit_z
 /* Gruppe 3 (0.9.25, Entwurf 2.9): Minutentakt und MQTT. */
 $ew_r = ew_pruef_mqtt_takt($ew_cfg);
 $ew_selbst[] = array('was' => ew_t('TEXT.S_MQTT_TAKT'), 'lage' => $ew_r[0], 'wie' => $ew_r[1]);
+// 0.9.41: faellt das Themen-Praefix auf einen gemeinsamen Bereich unter haus/ (Regeln/07)?
+$ew_hb = ew_pruef_praefix_haus($ew_cfg);
+$ew_selbst[] = array('was' => ew_t('HAUSBEREICH.F_TEST'),
+    'lage' => $ew_hb[0] === 1 ? 'ok' : ($ew_hb[0] === 0 ? 'fehl' : 'hinweis'), 'wie' => $ew_hb[1]);
 $ew_r = ew_pruef_mqtt_namen($ew_cfg);
 $ew_selbst[] = array('was' => ew_t('TEXT.S_MQTT_NAMEN'), 'lage' => $ew_r[0], 'wie' => $ew_r[1]);
 $ew_r = ew_pruef_mqtt_http();

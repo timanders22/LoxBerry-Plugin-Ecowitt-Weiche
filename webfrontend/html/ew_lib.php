@@ -1,9 +1,11 @@
 <?php
 require_once __DIR__ . '/sprachausgabe.php';     // Stamm, fuer die Vorgaben der Sprachansagen schon beim ersten Lesen der Konfiguration
+require_once __DIR__ . '/meldung.php';     // Statusmeldungen an SignalBot (seit 0.9.41)
 /* Gemeinsames Sicherungsmodul (Abschrift von Werkzeuge/gemeinsam/sicherung.php, seit 0.9.34): "Einstellungen
  * sichern" und "Einstellungen zurueckspielen" verhalten sich in allen Plugins des Hauses gleich. Liegt neben
  * dieser Datei und schuetzt sich selbst gegen doppeltes Laden. */
 require_once __DIR__ . '/sicherung.php';
+require_once __DIR__ . '/haus_bereiche.php';     // gemeinsame Bereiche unter haus/ (seit 0.9.41, Regeln/07)
 /**
  * Ecowitt-Weiche - gemeinsamer Unterbau
  *
@@ -533,6 +535,82 @@ function ew_wert_pruefen($k, $w)
         ew_wert_zeigen($w, $k === 'token'), ew_t('ERLAUBT.' . strtoupper($k))));
 }
 
+/* ==================================================================
+ * Lade-Beanstandungen (0.9.41; Regeln/05, Sicherungsmodul 1.3.0)
+ *
+ * ew_config() klemmt die Wartezeit und setzt jeden Schalter, der nicht 0 oder 1 ist, auf 0. Das bleibt - aber jede
+ * solche Ersetzung wird gemeldet (Reiter Test rot, Seite gelb, einmal ins Protokoll) und nie in die Datei
+ * zurueckgeschrieben.
+ * ================================================================== */
+
+/** Die rohen Werte von ecowitt.json (ohne jede Normierung), null = keine lesbare Datei. Schreibt nichts. */
+function ew_lade_roh()
+{
+    $p = ew_paths();
+    if ($p['cfgdatei'] === '') { return null; }
+    clearstatcache(true, $p['cfgdatei']);
+    return ew_json_lesen($p['cfgdatei']);
+}
+
+/** Die Beschreibung fuer die Lade-Beanstandungen (geheim: 'geheim' der Sicherungsbeschreibung). $maskiert = true fuer
+ *  den gelben Kasten (gibt unmittelbar aus: auch die Pruefsaetze der Linie werden maskiert, ew_wert_pruefen() liefert
+ *  Klartext); false fuer die Tabelle des Reiters Test und die Meldungen (die Seite maskiert bei der Ausgabe). */
+function ew_lade_b($maskiert = true)
+{
+    $b = ew_sicherung_beschreibung();
+    /* Die Sprechtoken der Datei (eine Sicherung traegt keine) nimmt das Modul fuer die Pruefung selbst heraus
+     * (sicherung_lade_ohne_geheim(), 1.3.0) - keine eigene Umgehung. */
+    if ($maskiert) {
+        $b['e'] = 'ew_e';
+        $pr = $b['pruefen'];
+        $b['pruefen'] = function ($k, $w) use ($pr) {
+            $t = call_user_func($pr, $k, $w);
+            return ($t === '' || $t === array() || $t === null) ? $t : ew_e(is_array($t) ? implode(' ', $t) : (string) $t);
+        };
+    } else {
+        $b['e'] = function ($s) { return (string) $s; };
+    }
+    return $b;
+}
+
+/** Die Lade-Beanstandungen: rohe Dateiwerte gegen den verwendeten Stand ($cfg, sonst ew_config(false)). */
+function ew_lade_beanstandungen($cfg = null, $maskiert = true)
+{
+    $d = ew_lade_roh();
+    if ($d === null) { return array(); }
+    $v = is_array($cfg) ? $cfg : ew_config(false);
+    return is_array($v) ? sicherung_lade_beanstandungen(ew_lade_b($maskiert), $d, $v) : array();
+}
+
+/** Vor dem Schreiben: jedes beanstandete Feld, das $c nicht geaendert hat, bekommt seinen Dateiwert zurueck. */
+function ew_lade_behalten(array $c)
+{
+    $d = ew_lade_roh();
+    $v = ew_config(false);
+    if ($d === null || !is_array($v)) { return $c; }
+    list($c, ) = sicherung_lade_behalten($c, $d, $v, sicherung_lade_beanstandungen(ew_lade_b(false), $d, $v));
+    return $c;
+}
+
+/** Minutentakt (bin/ew_takt.php): fehlende Einstellungen eintragen, dann die Lade-Beanstandungen einmal melden.
+ *  Rueckgabe wie ew_config_vervollstaendigen(). */
+function ew_dienst_pflege()
+{
+    $r = ew_config_vervollstaendigen();
+    ew_lade_melden(ew_lade_beanstandungen());     // Kennung D
+    return $r;
+}
+
+/** Einmal je Aenderung ins Protokoll (nur Namen und Gruende, nie Werte). */
+function ew_lade_melden(array $beanst)
+{
+    $d = ew_paths()['datadir'];
+    if ($d === '' || (!is_dir($d) && !@mkdir($d, 0775, true))) { return; }
+    if (sicherung_lade_melden_faellig($beanst, $d . '/lade_beanstandungen.merk')) {
+        ew_log(sicherung_lade_protokollzeile($beanst));
+    }
+}
+
 /** Eine JSON-Datei als Feld lesen; null, wenn sie fehlt oder kein Objekt ist. */
 function ew_json_lesen($f)
 {
@@ -745,10 +823,14 @@ function ew_config($erzeugen = true)
  * und die Oberflaeche meldete "gespeichert" (Fall O1, vorher rot).
  * Die Zweitschrift wird nur mit einem Stand beschrieben, der Inhalt traegt.
  */
-function ew_config_speichern(array $c, &$zweit = null)
+function ew_config_speichern(array $c, &$zweit = null, $lade_behalten = true)
 {
     $p = ew_paths();
     $zweit = false;
+    /* 0.9.41 (Lade-Beanstandungen, Regeln/05, Entscheidung des Hausherrn "Dateiwert behalten"): ein beim Laden
+     * beanstandetes Feld, das der neue Stand nicht geaendert hat, behaelt seinen gespeicherten Wert. Nicht beim
+     * Zurueckspielen, beim Vervollstaendigen (schreibt Dateiwerte) und beim Knopf "Angezeigte Werte uebernehmen". */
+    if ($lade_behalten) { $c = ew_lade_behalten($c); }
     if (!ew_json_schreiben($p['cfgdatei'], $c)) {
         return false;
     }
@@ -821,7 +903,9 @@ function ew_config_vervollstaendigen()
     }
     $roh = @file_get_contents($p['cfgdatei']);
     $datei = is_string($roh) ? json_decode($roh, true) : null;
-    if (!is_array($datei) || !isset($datei['token']) || !ew_token_taugt($datei['token']) || $datei['token'] === '') {
+    /* 0.9.41 (Lade-Beanstandungen, Regeln/05): jedes nicht leere Token genuegt; bis 0.9.40 ruhte das Vervollstaendigen
+     * bei einem formwidrigen (ew_token_taugt()). Das formwidrige Token bleibt und wird gemeldet. */
+    if (!is_array($datei) || !isset($datei['token']) || !is_string($datei['token']) || $datei['token'] === '') {
         return array('stand' => 'ohne_merkwort', 'schluessel' => array());
     }
     $fehlend = array();
@@ -838,7 +922,8 @@ function ew_config_vervollstaendigen()
     // Ein leeres Objekt der Datei ({}) bliebe nach json_decode(..., true) ein leeres Feld und kaeme als []
     // zurueck - der Rohwert wird erhalten.
     $datei = ew_json_leere_objekte($datei, json_decode($roh));
-    if (!ew_config_speichern($datei)) {
+    $ew_vz = null;
+    if (!ew_config_speichern($datei, $ew_vz, false)) {     // 0.9.41: die Dateiwerte - kein "Dateiwert behalten"
         ew_log('Konfiguration NICHT vervollstaendigt: ecowitt.json liess sich nicht schreiben ('
              . count($fehlend) . ' fehlende Schluessel).');
         return array('stand' => 'fehler', 'schluessel' => $fehlend);
@@ -1402,19 +1487,20 @@ function ew_stand_lesen()
 /** Die Schluessel der Sprachansagen in der Hauptkonfiguration. */
 function ew_ansage_schluessel()
 {
-    return array('tts', 'ansage_regeln', 'ansage_haken', 'ansage_token_herkunft', 'ansage_aus_datei');
+    return array('tts', 'ansage_regeln', 'ansage_haken', 'meldung', 'ansage_token_herkunft', 'ansage_aus_datei');
 }
 
 /** Die Vorgaben: nie gesetzt = ab Werk EIN. Ein gespeicherter Block bleibt, auch 'aus'. */
 function ew_ansage_vorgaben()
 {
-    return array('tts' => ansage_werk_block(), 'ansage_regeln' => ansage_regeln_vorgaben(), 'ansage_haken' => array('ausfall' => 1), 'ansage_token_herkunft' => array(), 'ansage_aus_datei' => 0);
+    return array('tts' => ansage_werk_block(), 'ansage_regeln' => ansage_regeln_vorgaben(), 'ansage_haken' => array('ausfall' => 1), 'meldung' => meld_vorgaben(ew_meld_haken_vorgabe(), ew_meld_haken_vorgabe()), 'ansage_token_herkunft' => array(), 'ansage_aus_datei' => 0);
 }
 
 /** Wertpruefung fuer die Sprachansagen: null = nicht meine Schluessel, sonst tauglich ja/nein. */
 function ew_ansage_wert($k, $w)
 {
     if (!in_array((string) $k, ew_ansage_schluessel(), true)) { return null; }
+    if ((string) $k === 'meldung') { return !meld_block_pruefen($w, ew_ansage_anlaesse()); }     // 0.9.41
     $g = '';
     switch ((string) $k) {
         case 'tts':
@@ -1496,7 +1582,16 @@ function ew_ansage_anlaesse()
 }
 
 /** Ist der Haken dieses Anlasses gesetzt? Fehlt er, gilt die Vorgabe der Linie. */
+/** 0.9.41: Will die Ansage ODER die Meldung an SignalBot diesen Anlass? So legt die Erkennung ihn fuer beide Wege hin;
+ * ew_ansage_senden() trennt sie wieder (ew_meld_nur_ansage()). */
 function ew_ansage_anlass_an($a, $cfg = null)
+{
+    if ($cfg === null) { $cfg = ew_ansage_cfg(); }
+    return ew_ansage_anlass_sprache($a, $cfg) || meld_anlass_an(ew_meld_block($cfg), (string) $a);
+}
+
+/** Ist der Haken dieses Anlasses fuer die ANSAGE gesetzt? (bis 0.9.41 hiess das ew_ansage_anlass_an()) */
+function ew_ansage_anlass_sprache($a, $cfg = null)
 {
     if ($cfg === null) { $cfg = ew_ansage_cfg(); }
     $h = (isset($cfg['ansage_haken']) && is_array($cfg['ansage_haken'])) ? $cfg['ansage_haken'] : array();
@@ -1529,12 +1624,14 @@ function ew_ansage_post(array $post)
     $h = array();
     $neu = ansage_formular_lesen($post, ew_tts($cfg), $m, $b, array('modi' => ew_ansage_modi(), 'ziele' => true, 'token_vor_ort' => true, 'aus_gewinnt' => true), $k, $h);
     list($r, $hk) = ansage_regeln_formular($post, ew_ansage_regeln($cfg), ew_ansage_anlaesse(), $m, $b, $k);
+    // 0.9.41: der Block 'Meldungen an SignalBot' (eine Beanstandung haelt das ganze Formular an, wie die Regeln)
+    $meld = meld_formular_lesen($post, array_key_exists('meldung', $cfg) ? $cfg['meldung'] : null, ew_ansage_anlaesse(), $m, $b, ew_meld_k(), ew_meld_haken_vorgabe());
     if ($m) {
         $t = array();
         foreach ($m as $x) { $t[] = $x['text']; }
         $e = array('_bean' => array_values($b));
         foreach ($post as $n => $w) {
-            if (strncmp((string) $n, 'tts_', 4) === 0 || strncmp((string) $n, 'ansage_', 7) === 0) {
+            if (strncmp((string) $n, 'tts_', 4) === 0 || strncmp((string) $n, 'ansage_', 7) === 0 || strncmp((string) $n, 'meld_', 5) === 0) {
                 if ((string) $n !== 'tts_alexa_token' && (string) $n !== 'tts_google_token') { $e[$n] = $w; }
             }
         }
@@ -1546,6 +1643,7 @@ function ew_ansage_post(array $post)
     $cfg['ansage_token_herkunft'] = ansage_token_herkunft_formular($post, isset($cfg['ansage_token_herkunft']) ? $cfg['ansage_token_herkunft'] : array());
     $cfg['ansage_regeln'] = $r;
     $cfg['ansage_haken'] = $hk;
+    $cfg['meldung'] = $meld;
     $t = array();
     foreach ($h as $x) { $t[] = $x['text']; }
     return array(ew_ansage_cfg_schreiben($cfg), array(), $t);
@@ -1569,8 +1667,14 @@ function ew_ansage_form_html($felder)
     $o[] = '<form action="index.php" method="post" autocomplete="off">' . $felder;
     $o[] = ansage_formular_html(ew_tts($cfg), $h + array('modi' => ew_ansage_modi(), 'ziele' => true, 'ziele_post' => isset($ein['tts_ziel_art']) ? $ein : null), $k);
     $o[] = ansage_regeln_html(ew_ansage_regeln($cfg), isset($cfg['ansage_haken']) && is_array($cfg['ansage_haken']) ? $cfg['ansage_haken'] : array('ausfall' => 1), ew_ansage_anlaesse(), $h + array('token_vor_ort' => true), $k);
+    // 0.9.41: Statusmeldungen an SignalBot (gemeinsames Modul meldung.php), im selben Formular
+    $o[] = '<h3>' . $e(ew_t('SIGNALMELDUNG.TITEL')) . '</h3>';
+    $o[] = meld_formular_html(ew_meld_block($cfg), ew_ansage_anlaesse(), $h, ew_meld_k());
+    list(, $meld_lage) = meld_pruefzeile(ew_meld_block($cfg), ew_meld_bean($cfg), ew_meld_k());
+    $o[] = '<div class="sm-hilfe">' . $e(ew_t('SIGNALMELDUNG.F_TEST') . ' ' . $meld_lage) . '</div>';
     $o[] = '<div class="sm-knopfreihe"><button data-role="none" class="sm-btn sm-b-aktion" type="submit" name="ansage_speichern" value="1">' . $e(ew_t('ANSAGEPLUGIN.K_SPEICHERN')) . '</button>';
     $o[] = '<button data-role="none" class="sm-btn sm-b-aktion" type="submit" name="ansage_test" value="1">' . $e(ew_t('ANSAGEPLUGIN.K_TEST')) . '</button></div>';
+    $o[] = '<div class="sm-knopfreihe"><button data-role="none" class="sm-btn sm-b-aktion" type="submit" name="meld_test" value="1">' . $e(ew_t('SIGNALMELDUNG.K_TEST')) . '</button></div>';     // 0.9.41
     $o[] = '</form>';
     $o[] = ew_ansage_lage_html($cfg);
     return implode("\n", $o) . "\n";
@@ -1740,6 +1844,8 @@ function ew_ansage_senden($jetzt = null)
         $conf = ew_ansage_cfg();
         ew_ansage_token_pflegen($conf);
         $conf = ew_ansage_cfg();
+        ew_meld_senden($frisch, $conf);     // 0.9.41: dieselben Anlaesse an SignalBot (eigene Haken)
+        $frisch = ew_meld_nur_ansage($frisch, $conf);     // die Ansage nur mit ihrem eigenen Haken
         $a = ansage_regel_sprechen($frisch, ew_tts($conf), ew_ansage_regeln($conf), ew_ansage_k());
         $erg = $a['regel'] !== '' ? $a['regel'] : 'gesprochen';
         if ($a['r'] !== null) {
@@ -1868,6 +1974,7 @@ function ew_sicherung_beschreibung()
                      }),
         'ansage_regeln' => sicherung_block(array_keys(ansage_regeln_vorgaben())),
         'ansage_haken' => sicherung_block(array('ausfall')),
+        'meldung'      => meld_sicherung_knoten(ew_ansage_anlaesse(), ew_meld_k()),     // 0.9.41
     );
     /* Normalform wie bisher: Wartezeit und Schalter als Zahl (ew_wert_pruefen() gibt sie zurueck). */
     foreach (array('timeout', 'pruefe_wert', 'mqtt_ein', 'haus_wetter_ein', 'haus_klima_ein') as $s) {
@@ -1890,11 +1997,18 @@ function ew_sicherung_beschreibung()
         'vorgaben' => ew_vorgaben(),
         'schluessel' => $schluessel,
         'nie_aus_datei' => array('ansage_token_herkunft', 'ansage_aus_datei'),
+        /* 0.9.41: nie mit Wert in den Lade-Beanstandungen (Modul 1.3.0) - das Wortzeichen (heisst hier token, das Modul
+         * kennt von sich aus nur aktionstoken) und die Sprechtoken. */
+        'geheim' => array_merge(array('token'), array_map(function ($n) { return 'tts.' . $n; }, ansage_geheim())),
         'uebersetzer' => 'ew_sicherung_alt_erkennen',
         'pruefen' => function ($k, $w) {
             $a = ew_ansage_wert($k, $w);
             if ($a !== null) { return $a ? '' : ew_t('ANSAGEPLUGIN.M_FEHL'); }
             list($ok, , $grund) = ew_wert_pruefen($k, $w);
+            /* 0.9.41: kein Praefix auf einem gemeinsamen Bereich unter haus/ (Regeln/07) - wie im Formular. */
+            if ($ok && $k === 'mqtt_praefix' && is_string($w) && hb_bereich($w) !== '') {
+                return sprintf(ew_t('HAUSBEREICH.SICH_W'), hb_bereich($w));
+            }
             return $ok ? '' : $grund;
         },
         'vorbereiten' => 'ew_sicherung_vorbereiten',
@@ -3146,6 +3260,7 @@ function ew_takt()
     $q = ($w['quelle'] === 'primaer') ? 1 : (($w['quelle'] === 'ersatz') ? 2 : 0);
     $zaehler = isset($alt['zaehler']) ? ((int) $alt['zaehler'] + 1) % 1000 : 0;
     $praefix = ew_mqtt_praefix($c);
+    ew_praefix_haus_melden($c);   // 0.9.41: Praefix im gemeinsamen Bereich? melden, nicht anhalten
     $vollmerk = $p['datadir'] . '/takt.voll';
     $voll_ts = isset($alt['voll_ts']) ? (int) $alt['voll_ts'] : 0;
     $voll = $voll_ts <= 0 || $jetzt - $voll_ts >= EW_VOLLVERSAND || $jetzt < $voll_ts || is_file($vollmerk)
@@ -4524,4 +4639,109 @@ function ew_vorlage_wetter($host, array $c)
     }
     return array('VI_Wetterstation_Ecowitt_Beispiel.xml',
                  ew_vorlage_xml('Wetterstation Ecowitt', ew_t('VORLAGE.W_KOPF'), ew_lox_adresse($host, $c, false), $b));
+}
+
+/**
+ * 0.9.41 (Entscheidung des Hausherrn 23.11.2026 "Nur gemeinsame Bereiche", Regeln/07): Zeile im Reiter Test -
+ * faellt das gespeicherte Themen-Praefix auf einen gemeinsamen Bereich unter haus/? Speichern und Zurueckspielen
+ * weisen ein solches Praefix ab; ein schon gespeichertes bleibt in Betrieb und ist hier rot, grau bei ausgeschaltetem MQTT.
+ * Liste und Pruefung aus dem gemeinsamen Modul haus_bereiche.php. Rueckgabe array(stand, html).
+ */
+function ew_pruef_praefix_haus($cfg)
+{
+    $p = ew_mqtt_praefix($cfg);
+    $b = hb_bereich($p);
+    if ($b !== '') {
+        if (!(!empty($cfg['mqtt_ein']))) {
+            return array(-1, sprintf(ew_t('HAUSBEREICH.A_AUS'), strval($p), strval($b)));
+        }
+        return array(0, sprintf(ew_t('HAUSBEREICH.A_NEIN'), strval($p), strval($b)));
+    }
+    return array(1, sprintf(ew_t('HAUSBEREICH.A_JA'), strval($p)));
+}
+
+/**
+ * 0.9.41: einmal je Aenderung eine Protokollzeile, solange das Praefix auf einen gemeinsamen Bereich faellt; der
+ * Versand bleibt, wie er ist. Gemerkt in praefix_haus_gemeldet.txt im Datenordner. Rueckgabe der Bereich oder ''.
+ */
+function ew_praefix_haus_melden($cfg, $merk = null)
+{
+    $p = ew_mqtt_praefix($cfg);
+    if ($merk === null) {
+        $merk = ew_paths()['datadir'] . '/praefix_haus_gemeldet.txt';
+    }
+    $b = hb_melden_faellig($p, $merk);
+    if ($b !== '') {
+        ew_log(hb_logtext($p, $b));
+    }
+    return $b;
+}
+
+/* ---------------- Statusmeldungen an SignalBot (0.9.41, gemeinsames Modul meldung.php) ----------------
+ *
+ * Auftrag des Hausherrn 23.11.2026, Entscheidungen 23.11.2026 ("haus/meldung (Empfehlung)", "Wie empfohlen"): dieselben
+ * Anlaesse wie die Ansage, eigener Haken je Anlass, ab Werk aus; Sperre, Bremse und Versand im Modul. Die Erkennung legt
+ * einen Anlass hin, wenn Ansage ODER Meldung ihn will (ew_ansage_anlass_an()); der Sender trennt die Wege wieder.
+ */
+
+/** Die ab-Werk-Haken der Ansage dieser Linie: so stehen auch die Haken der Meldung, solange der Block nie gespeichert ist. */
+function ew_meld_haken_vorgabe()
+{
+    return array('ausfall' => 1);
+}
+
+/** Der wirksame Block 'meldung' fuer den Betrieb (ungueltig gespeichert gilt als aus und wird im Formular genannt). */
+function ew_meld_block($cfg = null)
+{
+    if ($cfg === null) { $cfg = ew_ansage_cfg(); }
+    list($b) = meld_block(array_key_exists('meldung', $cfg) ? $cfg['meldung'] : null, ew_ansage_anlaesse(), ew_meld_haken_vorgabe());
+    return $b;
+}
+
+/** Die Beanstandungen eines gespeicherten Blocks (leer = gueltig). */
+function ew_meld_bean($cfg = null)
+{
+    if ($cfg === null) { $cfg = ew_ansage_cfg(); }
+    list(, $f) = meld_block(array_key_exists('meldung', $cfg) ? $cfg['meldung'] : null, ew_ansage_anlaesse(), ew_meld_haken_vorgabe());
+    return $f;
+}
+
+/** Der Kontext des Moduls: Datenordner (data/plugins/<ordner>, daraus der Absender) und Texte - wie bei der Ansage. */
+function ew_meld_k()
+{
+    return ew_ansage_k();
+}
+
+/** Fuer die Ansage nur Eintraege, deren Ansage-Haken gesetzt ist; ein Eintrag ohne bekannten Anlass bleibt wie bisher. */
+function ew_meld_nur_ansage(array $l, $cfg = null)
+{
+    if ($cfg === null) { $cfg = ew_ansage_cfg(); }
+    $anl = ew_ansage_anlaesse();
+    $aus = array();
+    foreach ($l as $e) {
+        if (is_array($e) && array_key_exists(meld_anlass_von($e), $anl) && !ew_ansage_anlass_sprache(meld_anlass_von($e), $cfg)) { continue; }
+        $aus[] = $e;
+    }
+    return $aus;
+}
+
+/** Die Eintraege an SignalBot melden. Protokoll: eine Zeile, wenn gesendet oder gescheitert (nie der Text). */
+function ew_meld_senden(array $l, $cfg = null)
+{
+    if ($cfg === null) { $cfg = ew_ansage_cfg(); }
+    $b = ew_meld_block($cfg);
+    if (empty($b['ein']) || !$l) { return null; }
+    $a = meld_regel_senden($l, $b, ew_meld_k());
+    if ($a['regel'] === '' || in_array($a['regel'], array('BREMSE', 'STAND', 'ORDNER'), true)) {
+        ew_log(meld_regel_kurz($a));
+    }
+    return $a;
+}
+
+/** Der Knopf "Testmeldung senden": array(angenommen, Satz). Geht an Haken, Sperre und Bremse vorbei. */
+function ew_meld_test()
+{
+    $r = meld_testmeldung(ew_meld_k());
+    ew_log('Testmeldung an SignalBot: ' . ($r[0] ? 'angenommen' : 'nicht angenommen'));
+    return $r;
 }
